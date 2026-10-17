@@ -102,6 +102,23 @@ Wybrano ext4 + LVM-thin.
 - Awaria dysku oznacza utratę lokalnych maszyn; ryzyko ograniczają
   codzienne kopie zapasowe na Synology (etap 1.6).
 
+```bash
+root@homelab:~# df -Th
+Filesystem           Type      Size  Used Avail Use% Mounted on
+udev                 devtmpfs   15G     0   15G   0% /dev
+tmpfs                tmpfs     3.2G  1.3M  3.2G   1% /run
+/dev/mapper/pve-root ext4       94G  5.3G   84G   6% /
+tmpfs                tmpfs      16G   46M   16G   1% /dev/shm
+efivarfs             efivarfs  320K   66K  250K  21% /sys/firmware/efi/efivars
+tmpfs                tmpfs     5.0M     0  5.0M   0% /run/lock
+tmpfs                tmpfs     1.0M     0  1.0M   0% /run/credentials/systemd-journald.service
+/dev/nvme0n1p2       vfat     1022M  9.1M 1013M   1% /boot/efi
+tmpfs                tmpfs      16G     0   16G   0% /tmp
+/dev/fuse            fuse      128M   16K  128M   1% /etc/pve
+tmpfs                tmpfs     1.0M     0  1.0M   0% /run/credentials/getty@tty1.service
+tmpfs                tmpfs     3.2G  4.0K  3.2G   1% /run/user/0
+root@homelab:~#
+```
 
 
   # ADR-003: Rozmieszczenie dysków maszyn wirtualnych
