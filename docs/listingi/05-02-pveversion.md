@@ -58,7 +58,8 @@ qemu-server: 9.2.11
 smartmontools: 7.5-pve2
 spiceterm: 3.4.2
 swtpm: 0.8.0+pve3
-```
+
 vncterm: 1.9.2
 zfsutils-linux: 2.4.4-pve1
 root@homelab:~# 
+```
