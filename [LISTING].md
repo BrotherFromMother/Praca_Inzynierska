@@ -90,3 +90,23 @@ Filesystem           Type  Size  Used Avail Use% Mounted on
 root@homelab:~# 
 
 ```
+
+
+
+
+```bash
+
+root@homelab:~#    grep -A8 "iface vmbr0" /etc/network/interfaces
+iface vmbr0 inet static
+        address 192.168.1.30/24
+        gateway 192.168.1.1
+        bridge-ports nic0
+        bridge-stp off
+        bridge-fd 0
+        bridge-vlan-aware yes
+        bridge-vids 2-4094
+
+root@homelab:~#
+
+
+```
