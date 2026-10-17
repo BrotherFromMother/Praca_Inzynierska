@@ -1,4 +1,4 @@
-# Praca-In-ynierska
+# PracaInzynierska
 
 # ADR-001: Wybór platformy wirtualizacji (hypervisora)
 
