@@ -137,3 +137,19 @@ keinshur@kv235-965:~$
 
 
 ```
+
+
+```bash
+
+keinshur@kv235-965:~$ ssh -T git@github.com
+The authenticity of host 'github.com (140.82.121.3)' can't be established.
+ED25519 key fingerprint is SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added 'github.com' (ED25519) to the list of known hosts.
+Enter passphrase for key '/home/keinshur/.ssh/github_ed25519':
+Hi BrotherFromMother! You've successfully authenticated, but GitHub does not provide shell access.
+keinshur@kv235-965:~$
+
+
+```
