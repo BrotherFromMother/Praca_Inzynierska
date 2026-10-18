@@ -227,7 +227,128 @@ Docelowo zadania automatyczne wykonuje kontener workera portalu (opcja 3).
   zabezpieczone hasłem i odblokowywane przez keychain.
 
 ---
+## ADR-006: Narzędzie Infrastructure as Code
 
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Infrastruktura (maszyny wirtualne, pule, reguły zapory) ma być tworzona
+deklaratywnie, z kodu przechowywanego w repozytorium. Narzędzie musi
+obsługiwać Proxmox VE i być szeroko stosowane w praktyce.
+
+### Rozważane opcje
+1. Terraform (HashiCorp)
+2. OpenTofu (fork Terraforma, Linux Foundation)
+3. Pulumi
+4. Wyłącznie Ansible (bez narzędzia do zarządzania zasobami)
+
+### Decyzja
+Wybrano **Terraform** (wersja 1.16).
+
+### Uzasadnienie
+- Standard branżowy w obszarze IaC: największa społeczność,
+  dokumentacja i liczba providerów.
+- Podejście deklaratywne z planem zmian (terraform plan) i stanem
+  pozwala wykrywać różnice między kodem a rzeczywistością.
+- Dojrzały provider dla Proxmox VE (ADR-007).
+- Narzędzie wiersza poleceń jest bezpłatne. Licencja BSL 1.1 (od 2023 r.)
+  dopuszcza użycie wewnętrzne w organizacji, w tym w wewnętrznej
+  platformie samoobsługowej; ogranicza jedynie oferowanie produktów
+  konkurencyjnych wobec usług HashiCorp.
+- Pulumi wymaga opisywania infrastruktury w języku ogólnego
+  przeznaczenia, co zwiększa złożoność; Ansible nie przechowuje stanu
+  i słabiej nadaje się do zarządzania cyklem życia zasobów.
+
+### Konsekwencje
+- Kod jest zgodny z OpenTofu, co umożliwia migrację bez zmian kodu
+  w przypadku zmian licencyjnych.
+- Podział ról: Terraform tworzy i usuwa zasoby wirtualne, Ansible
+  konfiguruje systemy wewnątrz maszyn.
+- Terraform nie jest oprogramowaniem open source w rozumieniu OSI;
+  w pracy określany jako oprogramowanie bezpłatne z dostępnym kodem
+  źródłowym.
+
+---
+
+## ADR-007: Provider Terraform dla Proxmox VE
+
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Terraform komunikuje się z Proxmox VE przez providera. Proxmox nie ma
+oficjalnego providera; dostępne są dwa popularne providery
+społecznościowe.
+
+### Rozważane opcje
+1. bpg/proxmox
+2. Telmate/proxmox
+
+### Decyzja
+Wybrano **bpg/proxmox** (wersja 0.117).
+
+### Uzasadnienie
+- Aktywny rozwój i wsparcie aktualnych wersji Proxmox VE.
+- Szerszy zakres obsługiwanych zasobów: maszyny, kontenery, pule,
+  pliki, cloud-init, reguły zapory.
+- Konfiguracja przez zmienne środowiskowe, co ułatwia oddzielenie
+  sekretów od kodu.
+
+### Konsekwencje
+- Większość operacji odbywa się wyłącznie przez API Proxmox VE z użyciem
+  tokenu. Według dokumentacji providera połączenie SSH z węzłem jest
+  wymagane tylko dla wybranych operacji: wgrywania snippetów cloud-init,
+  wgrywania niektórych typów plików, importu dysków z pliku lokalnego
+  (source_file.path) oraz konfiguracji idmap kontenerów LXC.
+  Sposób tworzenia szablonu maszyny zostanie dobrany w etapie 3 tak, aby
+  w miarę możliwości uniknąć konieczności dostępu SSH.
+- Provider jest w wersji 0.x i zmienia nazwy zasobów przed wydaniem 1.0
+  (np. proxmox_virtual_environment_version → proxmox_version). Ryzyko
+  ograniczono przez przypięcie zakresu wersji w versions.tf oraz plik
+  blokady .terraform.lock.hcl.
+- Provider jest podpisany kluczem autorów (provider społecznościowy),
+  a nie kluczem HashiCorp; podpis jest weryfikowany przy terraform init.
+
+---
+
+## ADR-008: Przechowywanie sekretów i stanu Terraform
+
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Terraform potrzebuje tokenu API Proxmoxa oraz przechowuje stan
+infrastruktury, który może zawierać wrażliwe dane. Repozytorium jest
+przechowywane w serwisie GitHub.
+
+### Decyzja
+- Token API: dedykowane konto terraform@pve z rolą TerraformProv
+  o ograniczonym zestawie uprawnień, token z separacją uprawnień.
+- Sekret tokenu przechowywany w menedżerze haseł oraz w pliku
+  ~/.config/homelab/proxmox.env (uprawnienia 600), poza repozytorium;
+  przekazywany do Terraforma przez zmienne środowiskowe.
+- Stan Terraform: na etapie budowy lokalnie, wykluczony z repozytorium
+  (.gitignore); docelowo w bazie PostgreSQL na svc01 (backend pg).
+
+### Uzasadnienie
+- Kod w repozytorium nie zawiera żadnego sekretu.
+- Kompromitacja tokenu nie daje pełnej kontroli nad hypervisorem.
+- Stan w bazie danych umożliwi współbieżny dostęp z blokadą,
+  potrzebny platformie samoobsługowej, oraz objęcie go kopiami
+  zapasowymi.
+
+### Konsekwencje
+- Znane ograniczenie: rola przypisana na ścieżce „/”; zakres zostanie
+  zawężony do puli zasobów w etapie 9.
+- Znane ograniczenie: wyłączona weryfikacja certyfikatu TLS API
+  (certyfikat samopodpisany); do usunięcia po wdrożeniu zaufanego
+  certyfikatu.
+- Znane ograniczenie: do etapu 6 stan istnieje tylko na stacji roboczej.
+- Lista uprawnień roli będzie rozszerzana w kolejnych etapach,
+  a każda zmiana dokumentowana.
+
+---
 
 ## Szablon nowej decyzji
 
