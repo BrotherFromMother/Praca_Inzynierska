@@ -296,6 +296,42 @@ przez GitHub.
 
 ---
 
+```console
+keinshur@kv235-965:~$ terraform version
+Terraform v1.16.6
+on linux_amd64
+keinshur@kv235-965:~$ ansible --version
+ansible [core 2.21.5]
+  executable location = /home/keinshur/.local/bin/ansible
+  python version = 3.13.5
+keinshur@kv235-965:~$ ansible-lint --version
+ansible-lint 26.10.1 using ansible-core:2.21.5
+```
+
+---
+
+```console
+
+root@homelab:~# pveum acl modify / --users terraform@pve --roles TerraformProv
+pveum acl modify / --tokens 'terraform@pve!iac' --roles TerraformProv
+pveum acl list
+exit
+┌──────┬───────────────┬───────┬───────────────────┬───────────┐
+│ path │ roleid        │ type  │ ugid              │ propagate │
+╞══════╪═══════════════╪═══════╪═══════════════════╪═══════════╡
+│ /    │ TerraformProv │ user  │ terraform@pve     │ 1         │
+├──────┼───────────────┼───────┼───────────────────┼───────────┤
+│ /    │ TerraformProv │ token │ terraform@pve!iac │ 1         │
+└──────┴───────────────┴───────┴───────────────────┴───────────┘
+logout
+Connection to 192.168.1.30 closed.
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$
+```
+
+
+---
+
+
 # Do uzupełnienia
 
 - [ ] Listing 5.1: ponownie uruchomić `apt update` na Proxmoxie i wkleić wynik
