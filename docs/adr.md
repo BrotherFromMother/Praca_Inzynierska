@@ -12,6 +12,10 @@ konsekwencje.
 | ADR-002 | System plików dysku lokalnego hypervisora | przyjęta | 2026-10-17 |
 | ADR-003 | Rozmieszczenie dysków maszyn wirtualnych  | przyjęta | 2026-10-17 |
 | ADR-004 | Protokół dostępu do magazynu na Synology  | przyjęta | 2026-10-17 |
+| ADR-005 | Stacja sterująca dla narzędzi IaC         | przyjęta | 2026-10-18 |
+| ADR-006 | Narzędzie Infrastructure as Code          | przyjęta | 2026-10-18 |
+| ADR-007 | Provider Terraform dla Proxmox VE         | przyjęta | 2026-10-18 |
+| ADR-008 | Przechowywanie sekretów i stanu Terraform | przyjęta | 2026-10-18 |
 
 ---
 
@@ -187,7 +191,6 @@ oraz `nas-back` (folder `pve-backup`).
 
 ---
 
-| ADR-005 | Stacja sterująca dla narzędzi IaC         | przyjęta | 2026-10-18 |
 
 ## ADR-005: Stacja sterująca dla narzędzi IaC
 
