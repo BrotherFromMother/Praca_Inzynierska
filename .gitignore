@@ -1,0 +1,24 @@
+# --- Terraform / OpenTofu ---
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+*.auto.tfvars
+secrets.tfvars
+
+# --- Ansible ---
+*.retry
+.vault_pass*
+
+# --- Sekrety ogólne ---
+.env
+.env.*
+*.pem
+*.key
+id_*
+
+# --- Edytor i system ---
+.vscode/
+Thumbs.db
+.DS_Store
