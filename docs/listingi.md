@@ -179,6 +179,7 @@ lokalną pulę LVM-thin na dyski maszyn (local-lvm) oraz dwa udziały NFS
 na Synology. Magazyn nas-vm przechowuje dyski środowisk, obrazy ISO,
 szablony i snippety cloud-init, a nas-backup wyłącznie kopie zapasowe.
 Dla obu udziałów wymuszono protokół NFS w wersji 4.1.
+
 ---
 
 ## Listing 5.9. Konfiguracja zadania kopii zapasowych
@@ -296,6 +297,23 @@ przez GitHub.
 
 ---
 
+## Listing 5.15. Logowanie do hypervisora kluczem SSH
+
+```console
+keinshur@kv235-965:~$ ssh homelab 'hostname && pveversion'
+homelab
+pve-manager/9.2.21/4f6e0ac86f9e8c7f (running kernel: 7.0.14-24-pve)
+```
+
+Komentarz: stacja robocza łączy się z hypervisorem kluczem Ed25519
+zabezpieczonym hasłem, bez przesyłania hasła konta przez sieć.
+Klucz do serwerów jest oddzielony od klucza używanego w serwisie
+GitHub, a odblokowane klucze przechowuje w pamięci narzędzie keychain.
+
+---
+
+## Listing 5.16. Wersje narzędzi Infrastructure as Code
+
 ```console
 keinshur@kv235-965:~$ terraform version
 Terraform v1.16.6
@@ -308,14 +326,16 @@ keinshur@kv235-965:~$ ansible-lint --version
 ansible-lint 26.10.1 using ansible-core:2.21.5
 ```
 
+Komentarz: Terraform zainstalowano z oficjalnego repozytorium HashiCorp
+jako pakiet systemowy, a Ansible i ansible-lint przez pipx, w izolowanym
+środowisku Pythona.
+
 ---
 
-```console
+## Listing 5.17. Uprawnienia konta automatyzacji w Proxmox VE
 
-root@homelab:~# pveum acl modify / --users terraform@pve --roles TerraformProv
-pveum acl modify / --tokens 'terraform@pve!iac' --roles TerraformProv
-pveum acl list
-exit
+```console
+root@homelab:~# pveum acl list
 ┌──────┬───────────────┬───────┬───────────────────┬───────────┐
 │ path │ roleid        │ type  │ ugid              │ propagate │
 ╞══════╪═══════════════╪═══════╪═══════════════════╪═══════════╡
@@ -323,25 +343,66 @@ exit
 ├──────┼───────────────┼───────┼───────────────────┼───────────┤
 │ /    │ TerraformProv │ token │ terraform@pve!iac │ 1         │
 └──────┴───────────────┴───────┴───────────────────┴───────────┘
-logout
-Connection to 192.168.1.30 closed.
-keinshur@kv235-965:~/projekty/Praca_Inzynierska$
 ```
 
+Komentarz: rola TerraformProv z ograniczonym zestawem uprawnień została
+przypisana zarówno użytkownikowi, jak i tokenowi z separacją uprawnień.
+Efektywne uprawnienia tokenu stanowią część wspólną obu przypisań.
+Zakres („/”) zostanie zawężony w etapie 9 (ADR-008).
 
 ---
 
+## Listing 5.18. Weryfikacja tokenu API bez udziału Terraforma
 
 ```console
-keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$ terraform plan
+keinshur@kv235-965:~$ source ~/.config/homelab/proxmox.env
+keinshur@kv235-965:~$ curl -s -k -H "Authorization: PVEAPIToken=$PROXMOX_VE_API_TOKEN" "${PROXMOX_VE_ENDPOINT}api2/json/version" | jq
+{
+  "data": {
+    "version": "9.2.21",
+    "repoid": "4f6e0ac86f9e8c7f",
+    "release": "9.2"
+  }
+}
+```
+
+Komentarz: token jest przekazywany przez zmienną środowiskową, dzięki
+czemu sekret nie pojawia się w poleceniu ani w historii terminala.
+Opcja -k wyłącza weryfikację certyfikatu samopodpisanego (ADR-008).
+
+---
+
+## Listing 5.19. Inicjalizacja konfiguracji Terraform
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform init
+Initializing the backend...
+
+Initializing provider plugins...
+- Finding latest version of bpg/proxmox...
+- Installing bpg/proxmox v0.117.0...
+- Installed bpg/proxmox v0.117.0 (self-signed, key ID 0B3405B36193A495)
+...
+Terraform has created a lock file .terraform.lock.hcl to record the provider
+selections it made above.
+...
+Terraform has been successfully initialized!
+```
+
+Komentarz: Terraform pobrał provider bpg/proxmox z publicznego rejestru,
+zweryfikował jego podpis kluczem autorów i zapisał wybraną wersję wraz
+z sumami kontrolnymi w pliku blokady.
+
+---
+
+## Listing 5.20. Plan zmian: utworzenie puli zasobów
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform plan
 data.proxmox_version.pve: Reading...
 data.proxmox_virtual_environment_nodes.all: Reading...
 data.proxmox_version.pve: Read complete after 0s [id=version]
 data.proxmox_virtual_environment_nodes.all: Read complete after 0s [id=nodes]
-
-Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the
-following symbols:
-  + create
 
 Terraform will perform the following actions:
 
@@ -361,27 +422,186 @@ Changes to Outputs:
     ]
   + portal_pool = "portal"
   + pve_version = "9.2.21"
-
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-Note: You didn't use the -out option to save this plan, so Terraform can't guarantee to take exactly these actions if
-you run "terraform apply" now.
-keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$
 ```
+
+Komentarz: na podstawie deklaratywnego opisu Terraform samodzielnie
+wyznaczył zmianę potrzebną do osiągnięcia stanu docelowego. Polecenie
+plan nie modyfikuje infrastruktury.
 
 ---
 
+## Listing 5.21. Zastosowanie zapisanego planu
+
 ```console
-Destroy complete! Resources: 1 destroyed.
-keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform plan -out=portal.tfplan
+...
+Saved the plan to: portal.tfplan
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply portal.tfplan
+proxmox_virtual_environment_pool.portal: Creating...
+proxmox_virtual_environment_pool.portal: Creation complete after 0s [id=portal]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+nodes = tolist([
+  "homelab",
+])
+portal_pool = "portal"
+pve_version = "9.2.21"
 ```
+
+Komentarz: zastosowanie zapisanego planu gwarantuje wykonanie dokładnie
+tych zmian, które zostały wcześniej przejrzane.
+
+---
+
+## Listing 5.22. Stan infrastruktury i idempotentność
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform state list
+data.proxmox_version.pve
+data.proxmox_virtual_environment_nodes.all
+proxmox_virtual_environment_pool.portal
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform plan
+...
+proxmox_virtual_environment_pool.portal: Refreshing state... [id=portal]
+...
+No changes. Your infrastructure matches the configuration.
+```
+
+Komentarz: ponowne wyznaczenie planu po zastosowaniu zmian nie wykazuje
+różnic między konfiguracją a stanem rzeczywistym, co potwierdza
+idempotentność rozwiązania.
+
+---
+
+## Listing 5.22a. Usunięcie zasobu: pełny cykl życia puli
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform destroy
+...
+Destroy complete! Resources: 1 destroyed.
+```
+
+Komentarz: polecenie destroy usuwa wyłącznie zasoby zarządzane przez
+Terraform i zapisane w jego stanie; źródła danych nie są usuwane.
+Ponowne wykonanie apply odtwarza pulę z kodu, co potwierdza, że zasób
+może zostać w każdej chwili odtworzony na podstawie konfiguracji.
+
+---
+
+## Listing 5.23. Wartości wyjściowe w formacie JSON
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform output -json
+{
+  "nodes": {
+    "sensitive": false,
+    "type": [
+      "list",
+      "string"
+    ],
+    "value": [
+      "homelab"
+    ]
+  },
+  "portal_pool": {
+    "sensitive": false,
+    "type": "string",
+    "value": "portal"
+  },
+  "pve_version": {
+    "sensitive": false,
+    "type": "string",
+    "value": "9.2.21"
+  }
+}
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform output -json | jq -r '.nodes.value[0]'
+homelab
+```
+
+Komentarz: wartości wyjściowe w formacie JSON mogą być automatycznie
+odczytywane przez inne programy, w szczególności przez platformę
+samoobsługową i narzędzie Ansible.
+
+---
+
+## Listing 5.24. Weryfikacja konfiguracji i połączenia Ansible
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible --version | grep "config file"
+  config file = /home/keinshur/projekty/Praca_Inzynierska/infra/ansible/ansible.cfg
+keinshur@kv235-965:~/…/infra/ansible$ ansible-inventory --graph
+@all:
+  |--@ungrouped:
+  |--@hypervisors:
+  |  |--homelab
+keinshur@kv235-965:~/…/infra/ansible$ ansible all -m ansible.builtin.ping
+homelab | SUCCESS =>
+    ansible_facts:
+        discovered_interpreter_python: /usr/bin/python3.13
+    changed: false
+    ping: pong
+```
+
+Komentarz: Ansible korzysta z konfiguracji zapisanej w repozytorium,
+a moduł ping potwierdza połączenie SSH z uwierzytelnianiem kluczem
+i dostępność interpretera Python na zarządzanym hoście.
+
+---
+
+## Listing 5.25. Pierwszy playbook i jego weryfikacja narzędziem ansible-lint
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/sprawdz-hypervisor.yml
+
+PLAY [Weryfikacja połączenia z hypervisorem] ***********************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [homelab]
+
+TASK [Wyświetl system operacyjny i wersję jądra] *******************************
+ok: [homelab] =>
+    msg: 'homelab: Debian 13.7, jądro 7.0.14-24-pve, RAM 31961 MB'
+
+PLAY RECAP *********************************************************************
+homelab                    : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+
+keinshur@kv235-965:~/…/infra/ansible$ ansible-lint playbooks/sprawdz-hypervisor.yml
+Passed: 0 failure(s), 0 warning(s) in 1 files processed of 1 encountered. Last profile that met the validation criteria was 'production'.
+```
+
+Komentarz: playbook odczytuje fakty o hoście bez wprowadzania zmian
+(changed=0) i spełnia najbardziej rygorystyczny profil reguł
+ansible-lint (production).
+
+---
+
+## Listingi kodu (z repozytorium)
+
+Pliki konfiguracji wstawiane do pracy bezpośrednio z repozytorium:
+
+| Listing | Plik |
+|---|---|
+| 5.26 | infra/terraform/platform/versions.tf |
+| 5.27 | infra/terraform/platform/providers.tf |
+| 5.28 | infra/terraform/platform/main.tf |
+| 5.29 | infra/terraform/platform/outputs.tf |
+| 5.30 | infra/ansible/ansible.cfg |
+| 5.31 | infra/ansible/inventories/hosts.yml |
+| 5.32 | infra/ansible/playbooks/sprawdz-hypervisor.yml |
 
 ---
 
 # Do uzupełnienia
 
-- [ ] Listing 5.1: ponownie uruchomić `apt update` na Proxmoxie i wkleić wynik
+- [x] Listing 5.1: wynik `apt update` po zmianie repozytoriów
+- [x] Konfiguracja magazynów: `cat /etc/pve/storage.cfg` (listing 5.8a)
+- [x] Logowanie do Proxmoxa kluczem SSH (listing 5.15)
+- [x] Usunięcie puli: `terraform destroy` (listing 5.22a)
+- [ ] Opcjonalnie: pełny wynik `terraform destroy` z planem usunięcia
 - [ ] Opcjonalnie: `pveversion -v` po restarcie (skrócona lista komponentów)
-- [ ] Konfiguracja magazynów: `cat /etc/pve/storage.cfg`
 - [ ] Opcjonalnie: log zadania pobrania ISO z potwierdzeniem sumy SHA-512
-- [ ] Etap 2.3: logowanie do Proxmoxa kluczem SSH (`ssh homelab 'hostname && pveversion'`)
+- [ ] Opcjonalnie: struktura repozytorium (`tree -a -I .git`)
+- [ ] Zrzuty etapu 2: VS Code z WSL, rola TerraformProv, token iac, pula portal, strona providera w rejestrze
