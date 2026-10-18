@@ -187,6 +187,48 @@ oraz `nas-back` (folder `pve-backup`).
 
 ---
 
+| ADR-005 | Stacja sterująca dla narzędzi IaC         | przyjęta | 2026-10-18 |
+
+## ADR-005: Stacja sterująca dla narzędzi IaC
+
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Narzędzia IaC i Ansible muszą być uruchamiane z maszyny mającej dostęp
+do API Proxmox VE i do SSH zarządzanych hostów (węzeł sterujący,
+ang. control node). Stacja robocza administratora działa pod kontrolą
+systemu Windows, a Ansible nie jest wspierany na Windowsie jako węzeł
+sterujący.
+
+### Rozważane opcje
+1. WSL2 (Debian) na stacji roboczej administratora
+2. Dedykowana maszyna wirtualna zarządzająca na Proxmoxie
+3. Kontener workera platformy samoobsługowej na svc01
+
+### Decyzja
+Na etapie budowy środowiska: **WSL2 z Debianem 13** na stacji roboczej.
+Docelowo zadania automatyczne wykonuje kontener workera portalu (opcja 3).
+
+### Uzasadnienie
+- WSL2 zapewnia pełne środowisko Linux w tej samej wersji co serwery
+  (Debian 13), bez zużywania zasobów hypervisora.
+- Maszyna zarządzająca na Proxmoxie byłaby niedostępna przy awarii
+  hypervisora, a jej utworzenie wymagałoby narzędzi, które sama ma
+  uruchamiać (problem rozruchu).
+- Ten sam kod IaC jest później uruchamiany w kontenerze workera,
+  więc wybór stacji nie wpływa na kod.
+
+### Konsekwencje
+- Repozytorium musi znajdować się w systemie plików WSL, a nie na dysku
+  Windows (wydajność, uprawnienia plików wymagane przez Ansible).
+- Rozszerzenia VS Code muszą być zainstalowane po stronie WSL.
+- Klucze SSH oddzielone według przeznaczenia (GitHub, serwery),
+  zabezpieczone hasłem i odblokowywane przez keychain.
+
+---
+
+
 ## Szablon nowej decyzji
 
 ## ADR-00X: Tytuł decyzji
