@@ -332,6 +332,52 @@ keinshur@kv235-965:~/projekty/Praca_Inzynierska$
 ---
 
 
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$ terraform plan
+data.proxmox_version.pve: Reading...
+data.proxmox_virtual_environment_nodes.all: Reading...
+data.proxmox_version.pve: Read complete after 0s [id=version]
+data.proxmox_virtual_environment_nodes.all: Read complete after 0s [id=nodes]
+
+Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the
+following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # proxmox_virtual_environment_pool.portal will be created
+  + resource "proxmox_virtual_environment_pool" "portal" {
+      + comment = "Srodowiska platformy samoobslugowej (zarzadzane przez Terraform)"
+      + id      = (known after apply)
+      + members = (known after apply)
+      + pool_id = "portal"
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+
+Changes to Outputs:
+  + nodes       = [
+      + "homelab",
+    ]
+  + portal_pool = "portal"
+  + pve_version = "9.2.21"
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+Note: You didn't use the -out option to save this plan, so Terraform can't guarantee to take exactly these actions if
+you run "terraform apply" now.
+keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$
+```
+
+---
+
+```console
+Destroy complete! Resources: 1 destroyed.
+keinshur@kv235-965:~/projekty/Praca_Inzynierska/infra/terraform/platform$
+```
+
+---
+
 # Do uzupełnienia
 
 - [ ] Listing 5.1: ponownie uruchomić `apt update` na Proxmoxie i wkleić wynik
