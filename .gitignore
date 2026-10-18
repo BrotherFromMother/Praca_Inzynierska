@@ -22,3 +22,6 @@ id_*
 .vscode/
 Thumbs.db
 .DS_Store
+
+# --- Pamięć podręczna Ansible i ansible-lint ---
+.ansible/
