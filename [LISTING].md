@@ -110,3 +110,30 @@ root@homelab:~#
 
 
 ```
+
+
+```bash
+
+keinshur@kv235-965:~$ git --version
+python3 --version
+pipx --version
+keychain --version
+git version 2.47.3
+Python 3.13.5
+1.7.1
+
+ * keychain 2.8.5 ~ http://www.funtoo.org
+
+   Copyright 2002-2006 Gentoo Foundation;
+   Copyright 2007 Aron Griffis;
+   Copyright 2009-2017 Funtoo Solutions, Inc;
+   lockfile() Copyright 2009 Parallels, Inc.
+
+ Keychain is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License version 2 as
+ published by the Free Software Foundation.
+
+keinshur@kv235-965:~$
+
+
+```
