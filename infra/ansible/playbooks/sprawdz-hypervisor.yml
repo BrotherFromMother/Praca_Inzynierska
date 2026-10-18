@@ -1,0 +1,13 @@
+---
+- name: Weryfikacja połączenia z hypervisorem
+  hosts: hypervisors
+  gather_facts: true
+
+  tasks:
+    - name: Wyświetl system operacyjny i wersję jądra
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }},
+          jądro {{ ansible_facts['kernel'] }},
+          RAM {{ ansible_facts['memtotal_mb'] }} MB
