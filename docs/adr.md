@@ -16,6 +16,8 @@ konsekwencje.
 | ADR-006 | Narzędzie Infrastructure as Code          | przyjęta | 2026-10-18 |
 | ADR-007 | Provider Terraform dla Proxmox VE         | przyjęta | 2026-10-18 |
 | ADR-008 | Przechowywanie sekretów i stanu Terraform | przyjęta | 2026-10-18 |
+| ADR-009 | Sposób budowy szablonu maszyny wirtualnej | przyjęta | 2026-10-18 |
+| ADR-010 | Uprawnienia do pobierania obrazów dysków  | przyjęta | 2026-10-18 |
 
 ---
 
@@ -166,7 +168,6 @@ zapasowe. Proxmox obsługuje dwa główne protokoły sieciowe: NFS
 ### Decyzja
 Wybrano **NFS w wersji 4.1**: magazyny `nas-vm` (folder `pve-vm`)
 oraz `nas-back` (folder `pve-backup`).
-(TODO: potwierdzić faktyczną wersję w wyniku `mount | grep nfs`)
 
 ### Uzasadnienie
 - Jeden udział obsługuje wiele typów zawartości: dyski VM, obrazy ISO,
@@ -352,6 +353,104 @@ przechowywane w serwisie GitHub.
   a każda zmiana dokumentowana.
 
 ---
+
+## ADR-009: Sposób budowy szablonu maszyny wirtualnej
+
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Wszystkie maszyny wirtualne projektu (dc1, svc01, środowiska
+użytkowników) mają być klonowane z jednego szablonu z systemem
+Debian 13. Szablon musi powstawać powtarzalnie, z kodu, i współpracować
+z cloud-init oraz Ansible.
+
+### Rozważane opcje
+1. Ręczna instalacja z ISO i konwersja na szablon
+2. Instalacja nienadzorowana z ISO (plik preseed)
+3. Budowa obrazu narzędziem Packer
+4. Oficjalny obraz chmurowy Debiana (genericcloud, qcow2)
+
+### Decyzja
+Wybrano **oficjalny obraz chmurowy Debian 13 w wariancie genericcloud**,
+pobierany i przekształcany w szablon przez Terraform. Wersja obrazu
+przypięta do konkretnego wydania z datą 20261017-2634,
+z weryfikacją sumy SHA-512.
+
+### Uzasadnienie
+- Obraz jest publikowany i utrzymywany przez projekt Debian.
+- Zawiera wbudowany cloud-init, wymagany do konfiguracji dostępu
+  przy pierwszym uruchomieniu maszyny.
+- Nie wymaga instalacji systemu: przygotowanie szablonu sprowadza się
+  do pobrania pliku, a maszyny uruchamiają się w kilkanaście sekund.
+- Nie wymaga dodatkowych narzędzi poza Terraformem.
+- Wariant genericcloud zawiera wyłącznie sterowniki dla maszyn
+  wirtualnych, dzięki czemu jest mniejszy od wariantu generic.
+- Przypięcie wydania z datą zamiast „latest” zapewnia powtarzalność:
+  ten sam kod zawsze tworzy ten sam szablon.
+
+### Konsekwencje
+- Ograniczona kontrola nad zawartością obrazu; konfiguracja systemu
+  realizowana przez cloud-init i Ansible.
+- Aktualizacja szablonu do nowszego wydania wymaga świadomej zmiany
+  wersji i sumy kontrolnej w kodzie.
+- Packer pozostaje kierunkiem rozwoju dla szablonów z preinstalowanym
+  oprogramowaniem.
+
+  ---
+
+## ADR-010: Uprawnienia do pobierania obrazów dysków
+
+**Status:** przyjęta
+**Data:** 2026-10-18
+
+### Kontekst
+Obraz chmurowy Debiana (ADR-009) jest pobierany przez Proxmox
+bezpośrednio z serwera Debiana, przez API (download-url), bez dostępu
+SSH. Próba pobrania kontem terraform@pve zakończyła się błędem 403
+(Permission check failed). Funkcja pobierania wymaga uprawnienia
+Datastore.AllocateTemplate na magazynie oraz Sys.Modify na całym
+klastrze albo Sys.AccessNetwork na węźle. Pobieranie z dowolnego adresu
+URL daje pośredni dostęp do sieci hypervisora, co stwarza ryzyko ataku
+typu SSRF (Server-Side Request Forgery).
+
+### Rozważane opcje
+1. Rozszerzenie roli TerraformProv o Sys.AccessNetwork
+2. Ręczne pobieranie obrazów kontem root, odwołanie z kodu do pliku
+3. Osobne konto i token wyłącznie do pobierania obrazów
+
+### Decyzja
+Wybrano **opcję 3**: konto terraform-images@pve z rolą ImageDownloader
+(Datastore.AllocateTemplate, Datastore.Audit, Sys.AccessNetwork,
+Sys.Audit), przypisaną wyłącznie na ścieżkach /storage/local
+i /nodes/homelab. Pobieranie obrazów wydzielono do osobnej konfiguracji
+Terraform (infra/terraform/images) z własnym stanem i własnym tokenem.
+
+### Uzasadnienie
+- Konto terraform@pve, docelowo używane przez platformę samoobsługową,
+  nie może zlecać hypervisorowi pobierania z dowolnych adresów URL,
+  co eliminuje wektor ataku SSRF z poziomu aplikacji.
+- Uprawnienie Sys.AccessNetwork zostało wprowadzone w Proxmox VE
+  specjalnie dla automatyzacji pobierania obrazów zgodnie z zasadą
+  najmniejszych uprawnień; jest znacznie węższe niż Sys.Modify.
+- Rola konta do obrazów ma zakres ograniczony do jednego magazynu
+  i jednego węzła.
+- Pobieranie obrazów jest operacją rzadką (aktualizacja szablonu),
+  wykonywaną ręcznie przez administratora.
+
+### Konsekwencje
+- Dwie konfiguracje Terraform z osobnymi stanami; konfiguracja platform
+  odwołuje się do obrazu przez jego identyfikator w magazynie
+  (local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2).
+- Dwa tokeny API i dwa pliki zmiennych środowiskowych do utrzymania.
+- Przed pracą w danym katalogu należy wczytać właściwy plik
+  zmiennych środowiskowych.
+- Pobranie obrazu trwało ok. 6,5 minuty; limit czasu pobierania
+  (upload_timeout) zwiększono z 600 do 1800 sekund.
+
+---
+
+
 
 ## Szablon nowej decyzji
 
