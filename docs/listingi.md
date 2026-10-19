@@ -616,6 +616,39 @@ Sys.AccessNetwork (ADR-010).
 
 ---
 
+
+## Listing 5.34a. Przypisania ról kont automatyzacji
+
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ssh homelab 'pveum acl list'
+┌────────────────┬─────────────────┬───────┬──────────────────────────┬───────────┐
+│ path           │ roleid          │ type  │ ugid                     │ propagate │
+╞════════════════╪═════════════════╪═══════╪══════════════════════════╪═══════════╡
+│ /              │ TerraformProv   │ user  │ terraform@pve            │ 1         │
+├────────────────┼─────────────────┼───────┼──────────────────────────┼───────────┤
+│ /              │ TerraformProv   │ token │ terraform@pve!iac        │ 1         │
+├────────────────┼─────────────────┼───────┼──────────────────────────┼───────────┤
+│ /nodes/homelab │ ImageDownloader │ user  │ terraform-images@pve     │ 1         │
+├────────────────┼─────────────────┼───────┼──────────────────────────┼───────────┤
+│ /nodes/homelab │ ImageDownloader │ token │ terraform-images@pve!img │ 1         │
+├────────────────┼─────────────────┼───────┼──────────────────────────┼───────────┤
+│ /storage/local │ ImageDownloader │ user  │ terraform-images@pve     │ 1         │
+├────────────────┼─────────────────┼───────┼──────────────────────────┼───────────┤
+│ /storage/local │ ImageDownloader │ token │ terraform-images@pve!img │ 1         │
+└────────────────┴─────────────────┴───────┴──────────────────────────┴───────────┘
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$
+
+```
+
+Komentarz: konto terraform-images@pve z rolą ImageDownloader ma
+uprawnienia wyłącznie na węźle homelab i magazynie local, w odróżnieniu
+od konta terraform@pve przypisanego na ścieżce „/”. Każda rola jest
+przypisana zarówno użytkownikowi, jak i jego tokenowi, ponieważ tokeny
+z separacją uprawnień nie dziedziczą uprawnień użytkownika (ADR-010).
+
+---
+
 ## Listing 5.35. Pobranie obrazu przez API osobnym kontem
 
 ```console
@@ -841,7 +874,7 @@ szablonu ani puli zasobów.
 
 ## Do uzupełnienia (etap 3)
 
-- [ ] Listing: `pveum acl list` z przypisaniami roli ImageDownloader
+- [x] Listing: `pveum acl list` z przypisaniami roli ImageDownloader (listing 5.34a)
 - [ ] Zrzuty etapu 3: lista wydań obrazów na cloud.debian.org, zakładka Import magazynu local, szablon 9000 i jego Hardware, maszyna 2999 w puli portal z zakładką Cloud-Init, zadania wykonane przez terraform@pve
 
 ---
