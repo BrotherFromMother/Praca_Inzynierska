@@ -16,6 +16,6 @@ jako przygotowanie do ewentualnej segmentacji).
 
 ## Uwagi
 - Adresy statyczne i pula portalu muszą leżeć poza zakresem DHCP routera.
-- TODO: sprawdzić i udokumentować aktualny zakres DHCP routera.
+- Zakres DHCP routera: 192.168.1.100–192.168.1.199 (sprawdzono 2026-10-19).
 - Hypervisor ma drugi interfejs sieciowy (nic1), obecnie nieużywany.
   TODO: ustalić jego typ (`ip -br link`).
