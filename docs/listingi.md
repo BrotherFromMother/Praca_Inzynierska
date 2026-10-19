@@ -578,6 +578,274 @@ ansible-lint (production).
 
 ---
 
+# Etap 3: Szablon maszyny wirtualnej jako kod
+
+## Listing 5.33. Odczyt sumy kontrolnej przypiętego wydania obrazu
+
+```console
+keinshur@kv235-965:~$ curl -s https://cloud.debian.org/images/cloud/trixie/20261017-2634/SHA512SUMS | grep 'genericcloud-amd64-20261017-2634.qcow2'
+ec584ccabfef7120b4c4f7482adf0e615894d9292cedec446b64194b951ebe5dd97c336b5dcbae458333764b0edd516334506017f33c4f2020ef8d38b569ffe3  debian-13-genericcloud-amd64-20261017-2634.qcow2
+```
+
+Komentarz: suma SHA-512 obrazu pobierana jest z pliku SHA512SUMS
+opublikowanego przez projekt Debian dla konkretnego wydania. Przypięcie
+wydania z datą zamiast katalogu latest zapewnia powtarzalność (ADR-009).
+
+---
+
+## Listing 5.34. Odmowa pobrania obrazu kontem terraform@pve
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+proxmox_download_file.debian13: Creating...
+╷
+│ Error: Error initiating file download
+│
+│ Could not get file metadata, unexpected error: error fetching
+│ metadata from download url, unexpected error in GetQueryURLMetadata:
+│ error retrieving URL metadata for
+│ "https://cloud.debian.org/images/cloud/trixie/20261017-2634/debian-13-genericcloud-amd64-20261017-2634.qcow2":
+│ received an HTTP 403 response - Reason: Permission check failed
+╵
+```
+
+Komentarz: rola TerraformProv nie obejmuje uprawnień do pobierania plików
+z dowolnych adresów URL przez hypervisor. Analiza wymaganych uprawnień
+doprowadziła do wydzielenia osobnego konta z uprawnieniem
+Sys.AccessNetwork (ADR-010).
+
+---
+
+## Listing 5.35. Pobranie obrazu przez API osobnym kontem
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/images$ terraform apply tfplan
+...
+proxmox_download_file.debian13: Creation complete after 6m31s [id=local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+debian13_image_id = "local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2"
+keinshur@kv235-965:~/…/infra/terraform/images$ ssh homelab 'pvesm list local --content import'
+Volid                                                         Format  Type           Size VMID
+local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2 qcow2   import    342818816
+```
+
+Komentarz: Proxmox pobrał obraz bezpośrednio z serwera Debiana i
+zweryfikował jego sumę SHA-512, a operację wykonało konto
+terraform-images@pve z rolą ograniczoną do magazynu local i węzła
+homelab. Obraz nie był przesyłany przez stację roboczą ani przez SSH.
+
+---
+
+## Listing 5.36. Zmiana parametru zasobu bez jego odtwarzania
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/images$ terraform plan
+proxmox_download_file.debian13: Refreshing state... [id=local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2]
+
+Terraform will perform the following actions:
+
+  # proxmox_download_file.debian13 will be updated in-place
+  ~ resource "proxmox_download_file" "debian13" {
+        id                  = "local:import/debian-13-genericcloud-amd64-20261017-2634.qcow2"
+      ~ upload_timeout      = 600 -> 1800
+        # (11 unchanged attributes hidden)
+    }
+
+Plan: 0 to add, 1 to change, 0 to destroy.
+```
+
+Komentarz: plan rozróżnia modyfikację zasobu w miejscu (~) od jego
+zastąpienia (-/+). Zwiększenie limitu czasu pobierania nie wymaga
+ponownego pobrania obrazu, co można zweryfikować przed wykonaniem zmiany.
+
+---
+
+## Listing 5.37. Konfiguracja szablonu maszyny w Proxmox VE
+
+```console
+keinshur@kv235-965:~$ ssh homelab 'qm config 9000'
+acpi: 1
+agent: enabled=0,fstrim_cloned_disks=0,type=virtio
+balloon: 0
+bios: seabios
+boot: order=scsi0;net0
+cores: 2
+cpu: x86-64-v2-AES
+description: Szablon Debian 13 (genericcloud), zarzadzany przez Terraform
+ide2: nas-vm:9000/vm-9000-cloudinit.qcow2,media=cdrom
+ipconfig0: ip=dhcp
+keyboard: en-us
+machine: q35
+memory: 2048
+meta: creation-qemu=11.0.3,ctime=1792427361
+name: tpl-debian13
+net0: virtio=BC:24:11:90:CD:A3,bridge=vmbr0,firewall=0
+numa: 0
+onboot: 1
+ostype: l26
+protection: 0
+scsi0: nas-vm:9000/base-9000-disk-0.qcow2,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=10G,ssd=0
+scsihw: virtio-scsi-single
+serial0: socket
+smbios1: uuid=b7e7b61f-d15c-4a1d-bc5f-884a4a6a4322
+sockets: 1
+tablet: 1
+tags: debian13;template;terraform
+template: 1
+vmgenid: 3c40badb-2f2a-42d0-a9dd-a4f8491e1657
+```
+
+Komentarz: deklaracja z pliku template.tf została przełożona na
+konfigurację maszyny w Proxmox VE: dysk zaimportowany z obrazu
+na magazyn nas-vm w formacie qcow2 (przedrostek base- oznacza dysk
+szablonu), napęd cloud-init (ide2), port szeregowy wymagany przez
+obrazy chmurowe Debiana oraz oznaczenie template: 1.
+
+---
+
+## Listing 5.38. Pliki szablonu na magazynie sieciowym
+
+```console
+keinshur@kv235-965:~$ ssh homelab 'pvesm list nas-vm --vmid 9000'
+Volid                               Format  Type             Size VMID
+nas-vm:9000/base-9000-disk-0.qcow2  qcow2   images    10737418240 9000
+nas-vm:9000/vm-9000-cloudinit.qcow2 qcow2   images        4194304 9000
+```
+
+Komentarz: szablon składa się z dysku systemowego o rozmiarze wirtualnym
+10 GiB oraz dysku cloud-init. Format qcow2 przydziela miejsce w miarę
+zapisu, więc faktyczne zajęcie magazynu jest znacznie mniejsze od
+rozmiaru wirtualnego.
+
+---
+
+## Listing 5.39. Odrzucenie wskazania magazynu dla klonu połączonego
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+proxmox_virtual_environment_vm.test_clone: Creating...
+╷
+│ Error: VM clone
+│
+│ All attempts fail:
+│ #1: error cloning VM: received an HTTP 500 response - Reason: parameter 'storage' not
+│ allowed for linked clones
+╵
+```
+
+Komentarz: klon połączony zapisuje wyłącznie różnice względem dysku
+szablonu, dlatego musi znajdować się w tym samym magazynie co szablon.
+Proxmox VE nie dopuszcza wskazania magazynu docelowego; parametr
+datastore_id usunięto z bloku clone.
+
+---
+
+## Listing 5.40. Utworzenie maszyny jako klonu połączonego
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+proxmox_virtual_environment_vm.test_clone: Creating...
+proxmox_virtual_environment_vm.test_clone: Still creating... [00m10s elapsed]
+proxmox_virtual_environment_vm.test_clone: Creation complete after 13s [id=2999]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+```
+
+Komentarz: utworzenie maszyny jako klonu połączonego trwało 13 sekund,
+ponieważ nie wymaga kopiowania dysku szablonu.
+
+---
+
+## Listing 5.41. Weryfikacja konfiguracji wykonanej przez cloud-init
+
+```console
+keinshur@kv235-965:~$ ssh -i ~/.ssh/homelab_ed25519 ansible@192.168.1.200 'cloud-init status --wait; echo "---"; hostname; id; echo "---"; ip -br a; echo "---"; df -h /; echo "---"; sudo -n true && echo "sudo bez hasla: OK"'
+status: done
+---
+test-debian13
+uid=1000(ansible) gid=1000(ansible) groups=1000(ansible),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev)
+---
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+eth0             UP             192.168.1.200/24 fe80::be24:11ff:fe91:915/64
+---
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1       9.7G  848M  8.4G   9% /
+---
+sudo bez hasla: OK
+```
+
+Komentarz: przy pierwszym uruchomieniu cloud-init ustawił nazwę hosta
+i statyczny adres IP, utworzył konto ansible z kluczem publicznym
+i uprawnieniami sudo oraz powiększył partycję systemową do rozmiaru
+dysku. Logowanie odbyło się kluczem, bez ręcznej konfiguracji maszyny.
+
+---
+
+## Listing 5.42. Przejęcie nowej maszyny przez Ansible
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible all -i "192.168.1.200," -u ansible --private-key ~/.ssh/homelab_ed25519 -m ansible.builtin.ping
+192.168.1.200 | SUCCESS =>
+    ansible_facts:
+        discovered_interpreter_python: /usr/bin/python3.13
+    changed: false
+    ping: pong
+keinshur@kv235-965:~/…/infra/ansible$ ansible all -i "192.168.1.200," -u ansible --private-key ~/.ssh/homelab_ed25519 -b -m ansible.builtin.command -a "whoami"
+192.168.1.200 | CHANGED | rc=0 >>
+root
+```
+
+Komentarz: Ansible połączył się z maszyną bezpośrednio po jej utworzeniu
+i wykonał polecenie z uprawnieniami administratora (-b), co zamyka
+łańcuch Terraform, cloud-init, Ansible. Moduł command zawsze zgłasza
+zmianę (CHANGED), ponieważ Ansible nie może ocenić skutków dowolnego
+polecenia.
+
+---
+
+## Listing 5.43. Usunięcie maszyny przez usunięcie jej z kodu
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform plan -out=tfplan
+...
+Plan: 0 to add, 0 to change, 1 to destroy.
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+proxmox_virtual_environment_vm.test_clone: Destroying... [id=2999]
+proxmox_virtual_environment_vm.test_clone: Destruction complete after 2s
+
+Apply complete! Resources: 0 added, 0 changed, 1 destroyed.
+keinshur@kv235-965:~$ ssh homelab 'qm list'
+      VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID
+      9000 tpl-debian13         stopped    2048              10.00 0
+```
+
+Komentarz: po usunięciu pliku test-vm.tf z konfiguracji Terraform
+wyznaczył usunięcie maszyny i wykonał je w 2 sekundy, nie naruszając
+szablonu ani puli zasobów.
+
+---
+
+## Listingi kodu etapu 3 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.44 | infra/terraform/images/images.tf |
+| 5.45 | infra/terraform/images/variables.tf |
+| 5.46 | infra/terraform/images/terraform.tfvars |
+| 5.47 | infra/terraform/platform/template.tf |
+| 5.48 | infra/terraform/platform/test-vm.tf (z historii Git, commit „Maszyna testowa etapu 3”) |
+
+## Do uzupełnienia (etap 3)
+
+- [ ] Listing: `pveum acl list` z przypisaniami roli ImageDownloader
+- [ ] Zrzuty etapu 3: lista wydań obrazów na cloud.debian.org, zakładka Import magazynu local, szablon 9000 i jego Hardware, maszyna 2999 w puli portal z zakładką Cloud-Init, zadania wykonane przez terraform@pve
+
+---
+
 ## Listingi kodu (z repozytorium)
 
 Pliki konfiguracji wstawiane do pracy bezpośrednio z repozytorium:
