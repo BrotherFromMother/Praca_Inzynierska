@@ -1,0 +1,12 @@
+---
+docker_apt_repository_url: https://download.docker.com/linux/debian
+
+docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+docker_users:
+  - ansible
