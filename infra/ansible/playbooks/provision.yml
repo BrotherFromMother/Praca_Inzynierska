@@ -1,0 +1,7 @@
+---
+- name: Konfiguracja środowiska użytkownika
+  hosts: all
+  become: true
+
+  roles:
+    - base

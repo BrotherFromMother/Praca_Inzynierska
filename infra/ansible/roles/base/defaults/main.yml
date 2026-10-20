@@ -1,0 +1,10 @@
+---
+base_packages:
+  - qemu-guest-agent
+  - curl
+  - ca-certificates
+  - gnupg
+  - htop
+  - vim
+
+base_timezone: Europe/Warsaw

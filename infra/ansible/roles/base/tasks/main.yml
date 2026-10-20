@@ -1,0 +1,25 @@
+---
+- name: Zaktualizuj listę pakietów i system
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    upgrade: dist
+
+- name: Zainstaluj pakiety bazowe
+  ansible.builtin.apt:
+    name: "{{ base_packages }}"
+    state: present
+
+- name: Ustaw strefę czasową
+  community.general.timezone:
+    name: "{{ base_timezone }}"
+
+- name: Sprawdź, czy aktualizacja wymaga ponownego uruchomienia
+  ansible.builtin.stat:
+    path: /var/run/reboot-required
+  register: base_reboot_required
+
+- name: Uruchom ponownie system, jeśli wymaga tego aktualizacja
+  ansible.builtin.reboot:
+    reboot_timeout: 300
+  when: base_reboot_required.stat.exists
