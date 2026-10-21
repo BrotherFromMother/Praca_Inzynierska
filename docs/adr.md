@@ -18,6 +18,8 @@ konsekwencje.
 | ADR-008 | Przechowywanie sekretów i stanu Terraform | przyjęta | 2026-10-18 |
 | ADR-009 | Sposób budowy szablonu maszyny wirtualnej | przyjęta | 2026-10-18 |
 | ADR-010 | Uprawnienia do pobierania obrazów dysków  | przyjęta | 2026-10-18 |
+| ADR-011 | Zakres projektu: usługi w kontenerach    | przyjęta | 2026-10-21 |
+| ADR-012 | Nazewnictwo domen i certyfikaty TLS       | przyjęta | 2026-10-21 |
 
 ---
 
@@ -451,6 +453,112 @@ Terraform (infra/terraform/images) z własnym stanem i własnym tokenem.
 ---
 
 
+
+## ADR-011: Zakres projektu: środowisko usług w kontenerach
+
+**Status:** przyjęta
+**Data:** 2026-10-21
+
+### Kontekst
+Pierwotny zakres zakładał autorską platformę samoobsługową (aplikację
+webową) do automatycznego tworzenia środowisk użytkowników. Po
+zakończeniu etapów 1–4 oceniono, że przy terminie złożenia pracy
+w grudniu 2026 r. oraz konieczności nauki programowania aplikacji
+webowych w Pythonie od podstaw, realizacja platformy stanowi największe
+ryzyko projektu. Zarejestrowany temat pracy („Projekt i implementacja
+środowiska korporacyjnego opartego na konteneryzacji usług”) nie
+wymaga platformy samoobsługowej; dotyczy usług korporacyjnych
+uruchamianych w kontenerach.
+
+### Rozważane opcje
+1. Pełna platforma samoobsługowa (wariant A)
+2. Uproszczona platforma samoobsługowa
+3. Środowisko usług korporacyjnych w kontenerach z pełną automatyzacją
+   wdrożenia i odtwarzania (wariant B)
+
+### Decyzja
+Wybrano **opcję 3**: środowisko usług korporacyjnych (Samba AD, Traefik,
+urząd certyfikacji step-ca, Gitea, BookStack, Zabbix) uruchamianych
+w kontenerach Docker, tworzone i konfigurowane w całości jako kod,
+z testem odtwarzania po awarii.
+
+### Uzasadnienie
+- Bezpośrednia zgodność z zarejestrowanym tematem i słowami kluczowymi
+  (środowisko korporacyjne, konteneryzacja, Docker, Linux, Git).
+- Eliminacja największego ryzyka harmonogramu.
+- Wykorzystanie doświadczenia autora z usługami Zabbix, Samba AD,
+  BookStack i reverse proxy.
+- Wkład własny realizowany przez projekt architektury, automatyzację
+  wdrożenia od zera, integrację usług z katalogiem LDAP oraz mierzalną
+  ewaluację odporności na awarię (RTO, RPO).
+
+### Konsekwencje
+- Moduł Terraform, role Ansible base i docker oraz skrypty z etapu 4
+  są wykorzystywane do tworzenia maszyn usługowych (dc1, svc01) zamiast
+  środowisk użytkowników.
+- Pula zasobów portal i konfiguracja environments z workspace
+  pozostają jako element badawczy, opisany w pracy, lecz nie są
+  częścią docelowego środowiska.
+- ADR-003: zapis dotyczący środowisk użytkowników na magazynie nas-vm
+  traci zastosowanie; maszyny usługowe pozostają na local-lvm.
+- Platforma samoobsługowa zostaje wskazana jako kierunek rozwoju.
+
+---
+
+## ADR-012: Nazewnictwo domen i certyfikaty TLS
+
+**Status:** przyjęta
+**Data:** 2026-10-21
+
+### Kontekst
+Usługi środowiska wymagają nazw DNS i certyfikatów TLS. Domena Active
+Directory po utworzeniu jest praktycznie niezmienialna. Nie przewidziano
+zakupu publicznej domeny.
+
+### Rozważane opcje (nazwa domeny AD)
+1. homelab.local
+2. homelab.lan
+3. ad.homelab.internal
+
+### Rozważane opcje (certyfikaty)
+1. Zakupiona domena i Let's Encrypt (DNS-01)
+2. DuckDNS i Let's Encrypt (DNS-01)
+3. deSEC (dedyn.io) i Let's Encrypt (DNS-01)
+4. Certyfikaty samopodpisane dla każdej usługi
+5. Własny urząd certyfikacji (step-ca) z protokołem ACME
+
+### Decyzja
+- Domena AD: **ad.homelab.internal**, nazwa NetBIOS **HOMELAB**.
+- Nazwy usług w strefie **homelab.internal** obsługiwanej przez dc1
+  (np. git.homelab.internal).
+- Certyfikaty z **własnego urzędu certyfikacji step-ca**, wystawiane
+  automatycznie protokołem ACME, z Traefikiem jako klientem.
+- Plan zapasowy: DuckDNS i Let's Encrypt.
+
+### Uzasadnienie
+- Końcówka .local jest zarezerwowana dla mDNS i powoduje konflikty
+  rozwiązywania nazw w domenie; .lan nie jest formalnie zarezerwowana.
+  Końcówkę .internal ICANN zarezerwowała w 2024 r. do użytku w sieciach
+  prywatnych.
+- Przedrostek ad. oddziela domenę AD od pozostałej przestrzeni nazw.
+- Własny urząd certyfikacji odpowiada praktyce stosowanej w sieciach
+  firmowych dla usług wewnętrznych i nie zależy od usług zewnętrznych.
+- Protokół ACME zapewnia automatyczne wystawianie i odnawianie
+  certyfikatów, tak jak przy Let's Encrypt.
+- DuckDNS pozwala na tylko jeden rekord TXT jednocześnie i narzuca
+  nazwę w obcej domenie; rejestracja nowych nazw w dedyn.io (deSEC)
+  była w październiku 2026 r. wstrzymana; certyfikaty samopodpisane
+  nie zapewniają automatyzacji.
+
+### Konsekwencje
+- Certyfikat główny urzędu musi zostać zaimportowany na stacjach
+  roboczych (ręcznie) i maszynach środowiska (przez Ansible).
+- Klucz prywatny urzędu certyfikacji wymaga szczególnej ochrony
+  i uwzględnienia w kopiach zapasowych.
+- Możliwe wystawienie zaufanego certyfikatu dla panelu Proxmox VE
+  i usunięcie wyłączonej weryfikacji TLS (ADR-008).
+
+---
 
 ## Szablon nowej decyzji
 
