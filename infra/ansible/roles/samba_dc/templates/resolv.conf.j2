@@ -1,0 +1,4 @@
+# Plik zarządzany przez Ansible (rola samba_dc).
+search {{ samba_dc_dns_domain }}
+nameserver {{ samba_dc_host_ip }}
+nameserver {{ samba_dc_dns_forwarder }}

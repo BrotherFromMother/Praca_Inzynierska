@@ -1,0 +1,108 @@
+---
+# --- Nazwa hosta: pełna nazwa wskazuje prawdziwy adres IP ---
+
+- name: Ustaw szablon /etc/hosts używany przez cloud-init
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/cloud/templates/hosts.debian.tmpl
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ustaw /etc/hosts
+  ansible.builtin.template:
+    src: hosts.j2
+    dest: /etc/hosts
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- DNS: zwolnienie portu 53 dla Samby ---
+
+- name: Sprawdź, czy /etc/resolv.conf jest dowiązaniem
+  ansible.builtin.stat:
+    path: /etc/resolv.conf
+  register: samba_dc_resolv
+
+- name: Usuń dowiązanie /etc/resolv.conf do systemd-resolved
+  ansible.builtin.file:
+    path: /etc/resolv.conf
+    state: absent
+  when: samba_dc_resolv.stat.islnk
+
+- name: Ustaw stały plik /etc/resolv.conf
+  ansible.builtin.template:
+    src: resolv.conf.j2
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Wyłącz systemd-resolved
+  ansible.builtin.systemd_service:
+    name: systemd-resolved
+    state: stopped
+    enabled: false
+    masked: true
+
+# --- Instalacja Samby ---
+
+- name: Zainstaluj pakiety Samby AD
+  ansible.builtin.apt:
+    name: "{{ samba_dc_packages }}"
+    state: present
+
+- name: Wyłącz usługi Samby przeznaczone dla serwera plików
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop:
+    - smbd
+    - nmbd
+    - winbind
+
+# --- Utworzenie domeny (tylko raz) ---
+
+- name: Sprawdź, czy domena została już utworzona
+  ansible.builtin.stat:
+    path: /var/lib/samba/private/sam.ldb
+  register: samba_dc_samdb
+
+- name: Usuń domyślny smb.conf przed utworzeniem domeny
+  ansible.builtin.file:
+    path: /etc/samba/smb.conf
+    state: absent
+  when: not samba_dc_samdb.stat.exists
+
+- name: Utwórz domenę Active Directory
+  ansible.builtin.command:
+    cmd: >-
+      samba-tool domain provision
+      --use-rfc2307
+      --realm={{ samba_dc_realm }}
+      --domain={{ samba_dc_netbios_domain }}
+      --server-role=dc
+      --dns-backend=SAMBA_INTERNAL
+      --host-ip={{ samba_dc_host_ip }}
+      --option="dns forwarder = {{ samba_dc_dns_forwarder }}"
+      --adminpass={{ samba_dc_admin_password }}
+    creates: /var/lib/samba/private/sam.ldb
+  no_log: true
+
+- name: Ustaw konfigurację Kerberos wygenerowaną przez Sambę
+  ansible.builtin.copy:
+    src: /var/lib/samba/private/krb5.conf
+    dest: /etc/krb5.conf
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Uruchom kontroler domeny i włącz go przy starcie systemu
+  ansible.builtin.systemd_service:
+    name: samba-ad-dc
+    state: started
+    enabled: true
+    masked: false

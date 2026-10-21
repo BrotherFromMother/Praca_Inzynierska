@@ -1,0 +1,19 @@
+---
+samba_dc_realm: AD.HOMELAB.INTERNAL
+samba_dc_dns_domain: ad.homelab.internal
+samba_dc_netbios_domain: HOMELAB
+samba_dc_host_ip: "{{ ansible_host }}"
+samba_dc_fqdn: "{{ inventory_hostname }}.{{ samba_dc_dns_domain }}"
+samba_dc_dns_forwarder: 192.168.1.1
+
+samba_dc_packages:
+  - samba
+  - samba-ad-dc
+  - samba-dsdb-modules
+  - samba-vfs-modules
+  - smbclient
+  - krb5-user
+  - ldb-tools
+  - dnsutils
+  - acl
+  - attr
