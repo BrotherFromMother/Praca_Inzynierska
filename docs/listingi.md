@@ -906,3 +906,285 @@ Pliki konfiguracji wstawiane do pracy bezpośrednio z repozytorium:
 - [ ] Opcjonalnie: log zadania pobrania ISO z potwierdzeniem sumy SHA-512
 - [ ] Opcjonalnie: struktura repozytorium (`tree -a -I .git`)
 - [ ] Zrzuty etapu 2: VS Code z WSL, rola TerraformProv, token iac, pula portal, strona providera w rejestrze
+
+# Etap 4: Mechanizm tworzenia i konfiguracji maszyn
+
+## Listing 5.49. Walidacja modułu Terraform
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/modules/portal-vm$ terraform init
+...
+- Installed bpg/proxmox v0.117.0 (self-signed, key ID 0B3405B36193A495)
+...
+Terraform has been successfully initialized!
+keinshur@kv235-965:~/…/infra/terraform/modules/portal-vm$ terraform validate
+Success! The configuration is valid.
+```
+
+Komentarz: moduł zawiera wyłącznie deklarację wymaganego providera,
+zmienne z walidacją, zasób maszyny i wartości wyjściowe. Nie konfiguruje
+połączenia z Proxmox VE; otrzymuje je od konfiguracji, która go wywołuje.
+
+---
+
+## Listing 5.50. Logowanie do nowej maszyny kluczem automatyzacji
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/environments$ ssh -i ~/.ssh/portal_automation_ed25519 -o StrictHostKeyChecking=accept-new ansible@192.168.1.201 'hostname && cloud-init status --wait'
+Warning: Permanently added '192.168.1.201' (ED25519) to the list of known hosts.
+env-001
+...............................................................status: done
+```
+
+Komentarz: maszyna utworzona z modułu w osobnym workspace przyjmuje
+logowanie kluczem automatyzacji (ADR-014). Opcja accept-new
+automatycznie zapisała klucz nowego serwera, a polecenie
+cloud-init status --wait poczekało na zakończenie pierwszej
+konfiguracji.
+
+---
+
+## Listing 5.51. Kolekcja Ansible zadeklarowana w requirements.yml
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-galaxy collection list community.general
+
+# /home/keinshur/.local/share/pipx/venvs/ansible/lib/python3.13/site-packages/ansible_collections
+Collection        Version
+----------------- -------
+community.general 13.5.0
+```
+
+Komentarz: kolekcja community.general była dostępna wyłącznie
+w środowisku Pythona narzędzia Ansible, a nie w środowisku ansible-lint.
+Jawna instalacja z pliku requirements.yml do katalogu
+~/.ansible/collections udostępnia ją obu narzędziom i zapewnia
+powtarzalność na innych maszynach.
+
+---
+
+## Listing 5.52. Pierwsze wykonanie roli base
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ time ansible-playbook -i "192.168.1.201," -u ansible --private-key ~/.ssh/portal_automation_ed25519 playbooks/provision.yml
+
+PLAY [Konfiguracja środowiska użytkownika] *************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [192.168.1.201]
+
+TASK [base : Zaktualizuj listę pakietów i system] ******************************
+ok: [192.168.1.201]
+
+TASK [base : Zainstaluj pakiety bazowe] ****************************************
+changed: [192.168.1.201]
+
+TASK [base : Ustaw strefę czasową] *********************************************
+changed: [192.168.1.201]
+
+TASK [base : Sprawdź, czy aktualizacja wymaga ponownego uruchomienia] **********
+ok: [192.168.1.201]
+
+TASK [base : Uruchom ponownie system, jeśli wymaga tego aktualizacja] **********
+skipping: [192.168.1.201]
+
+PLAY RECAP *********************************************************************
+192.168.1.201              : ok=5    changed=2    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+
+real    0m25.298s
+```
+
+Komentarz: rola zainstalowała pakiety bazowe i ustawiła strefę czasową.
+Restart został pominięty, ponieważ aktualizacja nie wymagała nowego
+jądra (warunek when).
+
+---
+
+## Listing 5.53. Idempotentność ról base i docker
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook -i "192.168.1.201," -u ansible --private-key ~/.ssh/portal_automation_ed25519 playbooks/provision.yml
+...
+PLAY RECAP *********************************************************************
+192.168.1.201              : ok=11   changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+```
+
+Komentarz: ponowne wykonanie obu ról na skonfigurowanej maszynie nie
+wprowadza żadnych zmian (changed=0), co potwierdza idempotentność.
+
+---
+
+## Listing 5.54. Pierwsze wykonanie roli docker
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ time ansible-playbook -i "192.168.1.201," -u ansible --private-key ~/.ssh/portal_automation_ed25519 playbooks/provision.yml
+...
+TASK [docker : Pobierz klucz GPG repozytorium Dockera] *************************
+changed: [192.168.1.201]
+
+TASK [docker : Dodaj repozytorium Dockera] *************************************
+changed: [192.168.1.201]
+
+TASK [docker : Zainstaluj pakiety Dockera] *************************************
+changed: [192.168.1.201]
+
+TASK [docker : Uruchom usługę Docker i włącz ją przy starcie systemu] **********
+ok: [192.168.1.201]
+
+TASK [docker : Dodaj użytkowników do grupy docker] *****************************
+changed: [192.168.1.201] => (item=ansible)
+
+PLAY RECAP *********************************************************************
+192.168.1.201              : ok=11   changed=4    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+
+real    4m11.390s
+```
+
+Komentarz: instalacja Dockera z oficjalnego repozytorium stanowi
+dominującą część czasu konfiguracji maszyny (ok. 4 min wobec 25 s dla
+roli base), co wskazuje wypiekanie obrazu z preinstalowanym Dockerem
+jako kierunek optymalizacji.
+
+---
+
+## Listing 5.55. Weryfikacja działania Dockera
+
+```console
+keinshur@kv235-965:~$ ssh -i ~/.ssh/portal_automation_ed25519 ansible@192.168.1.201 'docker --version && docker compose version && docker run --rm hello-world'
+Docker version 29.9.1, build dfc520d
+Docker Compose version v5.6.0
+Unable to find image 'hello-world:latest' locally
+latest: Pulling from library/hello-world
+...
+Hello from Docker!
+This message shows that your installation appears to be working correctly.
+```
+
+Komentarz: konto ansible uruchamia kontenery bez sudo dzięki
+członkostwu w grupie docker. Obraz został pobrany z rejestru Docker Hub,
+ponieważ nie było go lokalnie.
+
+---
+
+## Listing 5.56. Kod wyjścia cloud-init przy zakończeniu z ostrzeżeniami
+
+```console
+keinshur@kv235-965:~$ ssh -i ~/.ssh/portal_automation_ed25519 ansible@192.168.1.202 'uptime; cloud-init status --long'
+ 12:48:12 up 7 min,  1 user,  load average: 0.11, 0.12, 0.05
+status: done
+extended_status: degraded done
+...
+recoverable_errors:
+DEPRECATED:
+        - 'user' of type string is deprecated in 22.2 and scheduled to be removed in 27.2. Use 'users' list instead.
+keinshur@kv235-965:~$ ssh -i ~/.ssh/portal_automation_ed25519 ansible@192.168.1.202 'cloud-init status --wait; echo "kod wyjścia: $?"'
+status: done
+kod wyjścia: 2
+```
+
+Komentarz: cloud-init zakończył pracę z ostrzeżeniem wynikającym
+z formatu konfiguracji generowanej przez Proxmox VE i zwrócił kod 2.
+Pierwsza wersja skryptu traktowała każdy kod różny od 0 jako błąd;
+poprawiona wersja uznaje kody 0 i 2 za zakończenie i ogranicza czas
+oczekiwania do 10 minut.
+
+---
+
+## Listing 5.57. Wznowienie przerwanego procesu
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ./infra/scripts/provision.sh env-002 2002 192.168.1.202
+==> [1/3] Terraform: tworzenie maszyny env-002
+module.env.proxmox_virtual_environment_vm.this: Refreshing state... [id=2002]
+
+No changes. Your infrastructure matches the configuration.
+...
+==> [2/3] Oczekiwanie na SSH i zakończenie cloud-init
+
+==> [3/3] Ansible: konfiguracja systemu
+...
+PLAY RECAP *********************************************************************
+192.168.1.202              : ok=11   changed=6    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+
+==> Środowisko env-002 gotowe: ansible@192.168.1.202
+    Terraform:  1 s
+    cloud-init: 1 s
+    Ansible:    404 s
+    Razem:      406 s
+```
+
+Komentarz: ponowne uruchomienie skryptu po przerwaniu kontynuuje proces
+od niewykonanego kroku: Terraform nie tworzy istniejącej maszyny,
+a Ansible wykonuje wyłącznie brakującą konfigurację. Właściwość ta
+wynika z idempotentności obu narzędzi.
+
+---
+
+## Listing 5.58. Pełne utworzenie maszyny jednym poleceniem
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ./infra/scripts/provision.sh env-003 2003 192.168.1.203
+...
+PLAY RECAP *********************************************************************
+192.168.1.203              : ok=11   changed=7    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0
+
+==> Środowisko env-003 gotowe: ansible@192.168.1.203
+    Terraform:  4 s
+    cloud-init: 22 s
+    Ansible:    431 s
+    Razem:      457 s
+```
+
+Komentarz: utworzenie i pełna konfiguracja maszyny od zera trwały
+457 s. Po wyłączeniu aktualizacji pakietów w cloud-init (upgrade = false)
+faza cloud-init skróciła się do 22 s, a aktualizacja systemu jest
+wykonywana jednokrotnie, przez rolę base.
+
+---
+
+## Listing 5.59. Usunięcie maszyny wraz z jej stanem
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ./infra/scripts/deprovision.sh env-001
+...
+Plan: 0 to add, 0 to change, 1 to destroy.
+...
+module.env.proxmox_virtual_environment_vm.this: Destroying... [id=2001]
+module.env.proxmox_virtual_environment_vm.this: Destruction complete after 1s
+
+Destroy complete! Resources: 1 destroyed.
+Switched to workspace "default".
+Deleted workspace "env-001"!
+==> Środowisko env-001 usunięte w 1 s
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ssh homelab 'qm list'
+      VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID
+      9000 tpl-debian13         stopped    2048              10.00 0
+```
+
+Komentarz: skrypt usuwa maszynę, jej workspace oraz wpis w known_hosts,
+pozostawiając szablon nienaruszony.
+
+---
+
+## Listingi kodu etapu 4 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.60 | infra/terraform/modules/portal-vm/variables.tf |
+| 5.61 | infra/terraform/modules/portal-vm/main.tf |
+| 5.62 | infra/terraform/modules/portal-vm/outputs.tf |
+| 5.63 | infra/terraform/environments/main.tf |
+| 5.64 | infra/ansible/ansible.cfg |
+| 5.65 | infra/ansible/requirements.yml |
+| 5.66 | infra/ansible/roles/base/tasks/main.yml |
+| 5.67 | infra/ansible/roles/docker/tasks/main.yml |
+| 5.68 | infra/ansible/playbooks/provision.yml |
+| 5.69 | infra/scripts/provision.sh |
+| 5.70 | infra/scripts/deprovision.sh |
+
+## Do uzupełnienia (etap 4)
+
+- [ ] Zrzuty: maszyny env-00x w puli portal, zadania wykonane przez terraform@pve, VS Code z rolami Ansible
+- [ ] Opcjonalnie: wynik ansible-lint z profilem production dla obu ról
+
+---

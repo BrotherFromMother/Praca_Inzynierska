@@ -20,6 +20,8 @@ konsekwencje.
 | ADR-010 | Uprawnienia do pobierania obrazów dysków  | przyjęta | 2026-10-18 |
 | ADR-011 | Zakres projektu: usługi w kontenerach    | przyjęta | 2026-10-21 |
 | ADR-012 | Nazewnictwo domen i certyfikaty TLS       | przyjęta | 2026-10-21 |
+| ADR-013 | Moduł Terraform i osobny stan maszyn      | przyjęta | 2026-10-21 |
+| ADR-014 | Klucz SSH automatyzacji                   | przyjęta | 2026-10-21 |
 
 ---
 
@@ -557,6 +559,79 @@ zakupu publicznej domeny.
   i uwzględnienia w kopiach zapasowych.
 - Możliwe wystawienie zaufanego certyfikatu dla panelu Proxmox VE
   i usunięcie wyłączonej weryfikacji TLS (ADR-008).
+
+---
+
+## ADR-013: Moduł Terraform i osobny stan dla każdej maszyny
+
+**Status:** przyjęta
+**Data:** 2026-10-21
+
+### Kontekst
+Maszyny wirtualne tworzone z szablonu różnią się wyłącznie kilkoma
+parametrami (nazwa, VMID, adres IP, zasoby). Powielanie kodu dla każdej
+maszyny prowadzi do błędów i rozbieżności konfiguracji. Przechowywanie
+wielu niezależnych maszyn we wspólnym stanie Terraform powoduje
+blokowanie się operacji i utrudnia usuwanie pojedynczych maszyn.
+
+### Rozważane opcje
+1. Osobny plik .tf dla każdej maszyny, wspólny stan
+2. Moduł Terraform i jedna konfiguracja z wieloma wywołaniami
+   (for_each), wspólny stan
+3. Moduł Terraform i osobny stan dla każdej maszyny (workspace)
+
+### Decyzja
+Wybrano **opcję 3**: moduł infra/terraform/modules/portal-vm
+z walidacją parametrów wejściowych, wywoływany z konfiguracji
+infra/terraform/environments, z osobnym workspace dla każdej maszyny.
+
+### Uzasadnienie
+- Jedna definicja maszyny dla wszystkich środowisk: zmiana w module
+  obejmuje każdą nową maszynę.
+- Walidacja zmiennych (zakres VMID, liczba rdzeni, ilość pamięci)
+  odrzuca błędne dane przed jakąkolwiek zmianą w infrastrukturze.
+- Osobny stan umożliwia niezależne tworzenie i usuwanie maszyn
+  oraz równoległe operacje.
+
+### Konsekwencje
+- Usuwanie maszyny wymaga odczytu wartości zmiennych z jej stanu
+  (skrypt deprovision.sh).
+- Po zmianie zakresu (ADR-011) moduł wymaga uogólnienia na maszyny
+  usługowe: pełny klon na local-lvm i inny zakres VMID.
+
+---
+
+## ADR-014: Klucz SSH automatyzacji
+
+**Status:** przyjęta
+**Data:** 2026-10-21
+
+### Kontekst
+Maszyny tworzone automatycznie są konfigurowane przez Ansible
+z użyciem konta ansible, tworzonego przez cloud-init. Do tej pory
+konto otrzymywało klucz SSH administratora, który daje również dostęp
+do hypervisora.
+
+### Decyzja
+- Osobny klucz Ed25519 (portal_automation_ed25519) wyłącznie dla
+  automatyzacji, przekazywany do maszyn przez cloud-init.
+- Klucz bez hasła, ponieważ jest używany bez udziału człowieka.
+- Akceptacja kluczy nowych serwerów (StrictHostKeyChecking=accept-new)
+  w konfiguracji Ansible i skryptach; usuwanie wpisu z known_hosts
+  przy usuwaniu maszyny.
+
+### Uzasadnienie
+- Kompromitacja klucza automatyzacji nie daje dostępu do hypervisora
+  ani do kont administratora.
+- Działania automatyzacji są odróżnialne od działań administratora.
+- Opcja accept-new automatyzuje przyjęcie klucza nowej maszyny,
+  zachowując ochronę przed zmianą klucza znanego serwera.
+
+### Konsekwencje
+- Klucz bez hasła wymaga ochrony przez uprawnienia pliku (600)
+  i przechowywanie poza repozytorium.
+- Ponowne użycie adresu IP wymaga usunięcia starego wpisu
+  z known_hosts (realizowane przez deprovision.sh).
 
 ---
 

@@ -1,4 +1,4 @@
-# Jedno środowisko użytkownika na workspace (ADR-011).
+# Jedno środowisko użytkownika na workspace (ADR-013).
 module "env" {
   source = "../modules/portal-vm"
 
