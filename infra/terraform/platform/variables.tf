@@ -17,3 +17,12 @@ variable "debian13_image_id" {
   description = "Identyfikator obrazu Debian 13 w magazynie (wynik konfiguracji images)"
   type        = string
 }
+variable "gateway" {
+  description = "Brama domyślna sieci"
+  type        = string
+}
+
+variable "ssh_public_key_path" {
+  description = "Ścieżka do klucza publicznego automatyzacji"
+  type        = string
+}

@@ -16,3 +16,7 @@ output "debian13_template_id" {
   description = "Identyfikator VMID szablonu Debian 13"
   value       = proxmox_virtual_environment_vm.debian13_template.vm_id
 }
+output "dc1_ip" {
+  description = "Adres IPv4 kontrolera domeny"
+  value       = module.dc1.ip
+}

@@ -1,0 +1,7 @@
+---
+- name: Konfiguracja kontrolera domeny
+  hosts: domain_controllers
+  become: true
+
+  roles:
+    - base
