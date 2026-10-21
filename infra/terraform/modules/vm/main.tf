@@ -1,15 +1,15 @@
-# Środowisko użytkownika: klon połączony szablonu Debian 13.
+# Maszyna wirtualna klonowana z szablonu Debian 13 (ADR-013).
 # Konfiguracja dostępu (konto, klucz, sieć) przekazywana przez cloud-init.
 resource "proxmox_virtual_environment_vm" "this" {
   name        = var.name
-  description = "Srodowisko platformy samoobslugowej, zarzadzane przez Terraform"
-  tags        = ["portal", "terraform"]
+  description = var.description
+  tags        = var.tags
 
   node_name = var.node_name
   vm_id     = var.vm_id
   pool_id   = var.pool_id
 
-  on_boot         = false
+  on_boot         = var.on_boot
   started         = true
   stop_on_destroy = true
 
@@ -17,8 +17,9 @@ resource "proxmox_virtual_environment_vm" "this" {
   scsi_hardware = "virtio-scsi-single"
 
   clone {
-    vm_id = var.template_vm_id
-    full  = false
+    vm_id        = var.template_vm_id
+    full         = var.full_clone
+    datastore_id = var.clone_datastore_id
   }
 
   operating_system {
@@ -47,8 +48,7 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   initialization {
     datastore_id = var.datastore_id
-    upgrade = false
-
+    upgrade      = false
 
     ip_config {
       ipv4 {
