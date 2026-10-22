@@ -1,0 +1,137 @@
+---
+# Struktura katalogu. samba-tool nie jest idempotentny, więc każdy krok
+# stosuje wzorzec: najpierw odczytaj stan, potem zmień tylko to, czego brakuje.
+
+# --- Jednostki organizacyjne ---
+
+- name: Pobierz listę jednostek organizacyjnych
+  ansible.builtin.command:
+    argv: [samba-tool, ou, list]
+  register: samba_dc_ou_list
+  changed_when: false
+
+- name: Utwórz jednostki organizacyjne
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - ou
+      - add
+      - "{{ item }},{{ samba_dc_base_dn }}"
+  loop: "{{ samba_dc_ous }}"
+  when: item not in samba_dc_ou_list.stdout_lines
+  changed_when: true
+
+# --- Grupy ---
+
+- name: Pobierz listę grup
+  ansible.builtin.command:
+    argv: [samba-tool, group, list]
+  register: samba_dc_group_list
+  changed_when: false
+
+- name: Utwórz grupy
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - group
+      - add
+      - "{{ item }}"
+      - "--groupou=OU=Grupy,{{ samba_dc_org_ou }}"
+  loop: "{{ samba_dc_groups }}"
+  when: item not in samba_dc_group_list.stdout_lines
+  changed_when: true
+
+# --- Konta ---
+
+- name: Pobierz listę użytkowników
+  ansible.builtin.command:
+    argv: [samba-tool, user, list]
+  register: samba_dc_user_list
+  changed_when: false
+
+- name: Utwórz konto usługowe do odczytu katalogu
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - user
+      - add
+      - "{{ samba_dc_ldap_bind_user }}"
+      - "{{ samba_dc_ldap_bind_password }}"
+      - "--userou=OU=KontaUslugowe,{{ samba_dc_org_ou }}"
+      - "--description=Konto uslugowe do odczytu katalogu LDAP"
+  when: samba_dc_ldap_bind_user not in samba_dc_user_list.stdout_lines
+  changed_when: true
+  no_log: true
+
+- name: Utwórz konta użytkowników
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - user
+      - add
+      - "{{ item.name }}"
+      - "{{ item.password }}"
+      - "--userou=OU=Uzytkownicy,{{ samba_dc_org_ou }}"
+      - "--given-name={{ item.given_name }}"
+      - "--surname={{ item.surname }}"
+  loop: "{{ samba_dc_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in samba_dc_user_list.stdout_lines
+  changed_when: true
+  no_log: true
+
+# --- Członkostwo w grupach ---
+
+- name: Pobierz członków grup
+  ansible.builtin.command:
+    argv: [samba-tool, group, listmembers, "{{ item }}"]
+  loop: "{{ samba_dc_groups }}"
+  register: samba_dc_group_members
+  changed_when: false
+
+- name: Dodaj użytkowników do grup
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - group
+      - addmembers
+      - "{{ item.1 }}"
+      - "{{ item.0.name }}"
+  loop: "{{ samba_dc_users | subelements('groups') }}"
+  loop_control:
+    label: "{{ item.0.name }} -> {{ item.1 }}"
+  when: >-
+    item.0.name not in
+    (samba_dc_group_members.results | selectattr('item', 'equalto', item.1) | first).stdout_lines
+  changed_when: true
+
+# --- Hasła kont technicznych nie wygasają ---
+
+- name: Odczytaj flagi kont technicznych
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - user
+      - show
+      - "{{ item }}"
+      - --attributes=userAccountControl
+  loop:
+    - Administrator
+    - "{{ samba_dc_ldap_bind_user }}"
+  register: samba_dc_uac
+  changed_when: false
+
+- name: Wyłącz wygasanie haseł kont technicznych
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - user
+      - setexpiry
+      - "{{ item.item }}"
+      - --noexpiry
+  loop: "{{ samba_dc_uac.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: ((item.stdout | regex_search('[0-9]+$') | int) // 65536) % 2 == 0
+  changed_when: true

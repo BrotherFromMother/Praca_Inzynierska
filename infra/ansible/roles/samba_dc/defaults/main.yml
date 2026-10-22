@@ -17,3 +17,22 @@ samba_dc_packages:
   - dnsutils
   - acl
   - attr
+
+# --- Struktura katalogu ---
+samba_dc_base_dn: "DC={{ samba_dc_dns_domain.split('.') | join(',DC=') }}"
+samba_dc_org_ou: OU=Homelab
+
+samba_dc_ous:
+  - OU=Homelab
+  - OU=Uzytkownicy,OU=Homelab
+  - OU=Grupy,OU=Homelab
+  - OU=KontaUslugowe,OU=Homelab
+
+samba_dc_groups:
+  - grp-it-admins
+  - grp-gitea-users
+  - grp-wiki-users
+  - grp-zabbix-users
+
+samba_dc_ldap_bind_user: svc-ldap-bind
+samba_dc_users: []

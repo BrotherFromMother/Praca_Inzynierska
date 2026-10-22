@@ -106,3 +106,6 @@
     state: started
     enabled: true
     masked: false
+
+- name: Utwórz strukturę katalogu
+  ansible.builtin.import_tasks: directory.yml
