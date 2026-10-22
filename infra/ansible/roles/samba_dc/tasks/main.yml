@@ -109,3 +109,6 @@
 
 - name: Utwórz strukturę katalogu
   ansible.builtin.import_tasks: directory.yml
+
+- name: Skonfiguruj strefę DNS usług
+  ansible.builtin.import_tasks: dns.yml

@@ -36,3 +36,6 @@ samba_dc_groups:
 
 samba_dc_ldap_bind_user: svc-ldap-bind
 samba_dc_users: []
+
+samba_dc_service_zone: homelab.internal
+samba_dc_service_records: []

@@ -20,3 +20,11 @@ samba_dc_users:
       - grp-gitea-users
       - grp-wiki-users
       - grp-zabbix-users
+
+samba_dc_service_zone: homelab.internal
+samba_dc_service_records:
+  - { name: svc01, ip: 192.168.1.41 }
+  - { name: ca, ip: 192.168.1.41 }
+  - { name: git, ip: 192.168.1.41 }
+  - { name: wiki, ip: 192.168.1.41 }
+  - { name: zabbix, ip: 192.168.1.41 }

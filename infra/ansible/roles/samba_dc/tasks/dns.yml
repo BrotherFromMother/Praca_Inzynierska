@@ -1,0 +1,71 @@
+---
+# Strefa DNS dla adresów usług (ADR-012).
+
+- name: Sprawdź, czy strefa usług istnieje
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - dns
+      - zoneinfo
+      - localhost
+      - "{{ samba_dc_service_zone }}"
+      - --username=Administrator
+      - "--password={{ samba_dc_admin_password }}"
+  register: samba_dc_zone_info
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Utwórz strefę usług
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - dns
+      - zonecreate
+      - localhost
+      - "{{ samba_dc_service_zone }}"
+      - --username=Administrator
+      - "--password={{ samba_dc_admin_password }}"
+  when: samba_dc_zone_info.rc != 0
+  changed_when: true
+  no_log: true
+
+- name: Sprawdź istniejące rekordy usług
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - dns
+      - query
+      - localhost
+      - "{{ samba_dc_service_zone }}"
+      - "{{ item.name }}"
+      - A
+      - --username=Administrator
+      - "--password={{ samba_dc_admin_password }}"
+  loop: "{{ samba_dc_service_records }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: samba_dc_record_query
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Dodaj brakujące rekordy usług
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - dns
+      - add
+      - localhost
+      - "{{ samba_dc_service_zone }}"
+      - "{{ item.item.name }}"
+      - A
+      - "{{ item.item.ip }}"
+      - --username=Administrator
+      - "--password={{ samba_dc_admin_password }}"
+  loop: "{{ samba_dc_record_query.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: item.rc != 0
+  changed_when: true
+  no_log: true
