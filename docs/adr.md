@@ -22,6 +22,9 @@ konsekwencje.
 | ADR-012 | Nazewnictwo domen i certyfikaty TLS       | przyjęta | 2026-10-21 |
 | ADR-013 | Moduł Terraform i osobny stan maszyn      | przyjęta | 2026-10-21 |
 | ADR-014 | Klucz SSH automatyzacji                   | przyjęta | 2026-10-21 |
+| ADR-015 | Kontroler domeny: Samba AD w VM           | przyjęta | 2026-10-22 |
+| ADR-016 | Sekrety Ansible: Ansible Vault            | przyjęta | 2026-10-22 |
+| ADR-017 | Struktura katalogu i integracja LDAPS     | przyjęta | 2026-10-22 |
 
 ---
 
@@ -632,6 +635,134 @@ do hypervisora.
   i przechowywanie poza repozytorium.
 - Ponowne użycie adresu IP wymaga usunięcia starego wpisu
   z known_hosts (realizowane przez deprovision.sh).
+
+---
+
+## ADR-015: Kontroler domeny: Samba AD w maszynie wirtualnej
+
+**Status:** przyjęta
+**Data:** 2026-10-22
+
+### Kontekst
+Środowisko wymaga centralnego katalogu kont (Active Directory). Temat
+pracy dotyczy konteneryzacji usług, co nasuwa pytanie, czy kontroler
+domeny również powinien działać w kontenerze. Rozważano także
+zastosowanie Windows Server, dominującego w dużych organizacjach.
+
+### Rozważane opcje
+1. Samba AD w kontenerze Docker na svc01
+2. Samba AD w osobnej maszynie wirtualnej z Debianem
+3. Windows Server (dwa kontrolery domeny)
+
+### Decyzja
+Wybrano **opcję 2**: Samba AD w osobnej maszynie wirtualnej dc1
+(Debian 13, pełny klon na local-lvm, autostart).
+
+### Uzasadnienie
+- Kontroler domeny wymaga stałej tożsamości (nazwa, adres, czas),
+  wielu portów (DNS, Kerberos, LDAP, SMB, RPC), rozszerzonych atrybutów
+  systemu plików dla SYSVOL oraz izolacji od usług aplikacyjnych;
+  cechy te kolidują z modelem kontenerów. Dokumentacja Samby nie
+  zaleca uruchamiania kontrolera domeny w kontenerze.
+- Odtwarzanie kontrolera domeny przez wymianę kontenera grozi
+  uszkodzeniem replikacji (USN rollback).
+- Samba AD wykorzystuje ten sam szablon, role Ansible i system
+  operacyjny co pozostała infrastruktura, nie generuje kosztów
+  licencyjnych i działa również na architekturze ARM (możliwy drugi
+  kontroler na Raspberry Pi 5).
+- Windows Server dominuje w dużych organizacjach (integracja
+  z Microsoft 365, ekosystem, wsparcie producenta), jednak wymagałby
+  osobnego szablonu (sterowniki VirtIO, sysprep, cloudbase-init)
+  i kilku dni dodatkowej pracy; drugi kontroler na tym samym
+  hypervisorze nie zapewniałby realnej redundancji.
+
+### Konsekwencje
+- Domena działa na poziomie funkcjonalności Windows Server 2008 R2
+  (domyślny poziom Samby); wystarczający dla integracji LDAP usług.
+- Zarządzanie zasadami grupy (GPO) wymaga narzędzi RSAT z systemu
+  Windows.
+- Kontroler domeny jest pojedynczym punktem awarii; drugi kontroler
+  (np. na Raspberry Pi 5) wskazano jako kierunek rozwoju.
+
+---
+
+## ADR-016: Sekrety Ansible: Ansible Vault
+
+**Status:** przyjęta
+**Data:** 2026-10-22
+
+### Kontekst
+Konfiguracja kontrolera domeny wymaga haseł (administrator domeny,
+konto usługowe LDAP, użytkownicy testowi), które muszą być dostępne dla
+Ansible i odtwarzalne wraz z kodem. Repozytorium znajduje się
+w serwisie GitHub.
+
+### Rozważane opcje
+1. Hasła poza repozytorium, przekazywane ręcznie przy uruchomieniu
+2. Hasła w repozytorium w plikach zaszyfrowanych Ansible Vault
+3. Zewnętrzny menedżer sekretów (np. HashiCorp Vault, OpenBao)
+
+### Decyzja
+Wybrano **opcję 2**: zmienne poufne z przedrostkiem vault_ w pliku
+group_vars/domain_controllers/vault.yml, zaszyfrowanym algorytmem
+AES-256; zmienne jawne w vars.yml odwołują się do nich. Hasło do sejfu
+przechowywane poza repozytorium (~/.config/homelab, uprawnienia 600)
+i w menedżerze haseł.
+
+### Uzasadnienie
+- Sekrety są wersjonowane razem z kodem, a w repozytorium występują
+  wyłącznie w postaci zaszyfrowanej.
+- Brak dodatkowej usługi do utrzymania (w przeciwieństwie do opcji 3).
+- Konwencja vars.yml i vault.yml pozwala odnaleźć użycie zmiennej bez
+  odszyfrowywania pliku.
+- Zadania przekazujące hasła oznaczono no_log, a pętle etykietą
+  (loop_control.label), aby hasła nie trafiały do wyników.
+
+### Konsekwencje
+- Utrata hasła do sejfu uniemożliwia odczyt zaszyfrowanych plików.
+- Hasła generowane losowo (openssl rand) z dopiskiem zapewniającym
+  zgodność z polityką złożoności Samby.
+
+---
+
+## ADR-017: Struktura katalogu i integracja usług przez LDAPS
+
+**Status:** przyjęta
+**Data:** 2026-10-22
+
+### Kontekst
+Usługi (Gitea, BookStack, Zabbix) mają uwierzytelniać użytkowników
+kontami domeny i nadawać uprawnienia na podstawie przynależności do
+grup. Domyślne hasła w domenie wygasają po 42 dniach.
+
+### Decyzja
+- Struktura OU: OU=Homelab z jednostkami Uzytkownicy, Grupy
+  i KontaUslugowe; nazwy bez znaków diakrytycznych.
+- Kontrola dostępu oparta na rolach (RBAC): grupy grp-it-admins,
+  grp-gitea-users, grp-wiki-users, grp-zabbix-users.
+- Konto usługowe svc-ldap-bind bez uprawnień administracyjnych,
+  używane przez usługi wyłącznie do odczytu katalogu.
+- Wyłączone wygasanie haseł dla kont technicznych (Administrator,
+  svc-ldap-bind); konta użytkowników podlegają polityce domeny.
+- Integracja usług przez LDAPS (port 636) z kontem usługowym podanym
+  jako pełny DN; zwykły LDAP z prostym logowaniem jest odrzucany przez
+  kontroler domeny.
+- Strefa DNS homelab.internal z rekordami usług, zarządzana kodem.
+
+### Uzasadnienie
+- Uprawnienia nadawane grupom zamiast osobom: zmiana uprawnień
+  użytkownika wymaga zmiany wyłącznie w katalogu.
+- Wygaśnięcie hasła konta usługowego przerwałoby logowanie we
+  wszystkich zależnych usługach; ochronę zapewnia losowe hasło
+  w sejfie i minimalne uprawnienia konta.
+- LDAPS chroni hasła przesyłane podczas logowania.
+
+### Konsekwencje
+- Do czasu wdrożenia urzędu certyfikacji (etap 6) certyfikat LDAPS
+  kontrolera jest samopodpisany, a weryfikacja certyfikatu przez
+  klientów jest wyłączona.
+- Narzędzie samba-tool nie jest idempotentne; zadania Ansible stosują
+  wzorzec odczytu stanu przed zmianą.
 
 ---
 

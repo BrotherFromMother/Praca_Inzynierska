@@ -1188,3 +1188,294 @@ pozostawiając szablon nienaruszony.
 - [ ] Opcjonalnie: wynik ansible-lint z profilem production dla obu ról
 
 ---
+
+# Etap 5: Kontroler domeny dc1 (Samba AD)
+
+## Listing 5.71. Utworzenie maszyny dc1 jako pełnego klonu
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+module.dc1.proxmox_virtual_environment_vm.this: Creating...
+...
+module.dc1.proxmox_virtual_environment_vm.this: Creation complete after 1m29s [id=100]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+dc1_ip = "192.168.1.40"
+```
+
+Komentarz: pełny klon kopiuje dysk szablonu z magazynu nas-vm na
+local-lvm i trwał 89 s, wobec 4–13 s dla klonu połączonego. Wyższy
+koszt czasowy jest ceną niezależności kontrolera domeny od szablonu
+i od magazynu sieciowego (ADR-003).
+
+---
+
+## Listing 5.72. Sekret w repozytorium zaszyfrowany przez Ansible Vault
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ head -2 inventories/group_vars/domain_controllers/vault.yml
+$ANSIBLE_VAULT;1.1;AES256
+37346664386363383361373833616533346563346133633336303032383863323839323564353138
+keinshur@kv235-965:~/…/infra/ansible$ ansible domain_controllers -m ansible.builtin.debug -a "msg={{ samba_admin_password | length }}"
+dc1 | SUCCESS =>
+    msg: 28
+```
+
+Komentarz: plik z hasłami jest w repozytorium zaszyfrowany algorytmem
+AES-256. Ansible odszyfrowuje go w pamięci; weryfikacja wyświetla
+wyłącznie długość hasła, a nie jego treść (ADR-016).
+
+---
+
+## Listing 5.73. Rozpoznanie stanu maszyny przed instalacją Samby
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 '…'
+=== nazwa hosta
+dc1
+dc1
+=== /etc/hosts
+# Your system has configured 'manage_etc_hosts' as True.
+...
+127.0.1.1 dc1 dc1
+127.0.0.1 localhost
+=== resolv.conf
+lrwxrwxrwx 1 root root 39 Oct 17 06:57 /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf
+...
+nameserver 127.0.0.53
+search lan
+=== systemd-resolved
+active
+=== port 53
+udp   UNCONN 0      0         127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=388,fd=20))
+udp   UNCONN 0      0      127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=388,fd=18))
+...
+=== czas
+System clock synchronized: yes
+```
+
+Komentarz: rozpoznanie wykazało trzy przeszkody dla kontrolera domeny:
+nazwa hosta wskazująca adres pętli zwrotnej, plik /etc/hosts odtwarzany
+przez cloud-init oraz port 53 zajęty przez systemd-resolved. Rola
+samba_dc została zaprojektowana na podstawie tych ustaleń.
+
+---
+
+## Listing 5.74. Weryfikacja domeny na kontrolerze
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 '…'
+=== pełna nazwa hosta
+dc1.ad.homelab.internal
+=== usługa
+active
+=== port 53
+udp   UNCONN 0      0            0.0.0.0:53         0.0.0.0:*    users:(("dns[master]",pid=9811,fd=49))
+...
+=== poziom domeny
+Forest function level: (Windows) 2008 R2
+Domain function level: (Windows) 2008 R2
+Lowest function level of a DC: (Windows) 2008 R2
+=== rekordy SRV: LDAP i Kerberos
+_ldap._tcp.ad.homelab.internal has SRV record 0 100 389 dc1.ad.homelab.internal.
+_kerberos._udp.ad.homelab.internal has SRV record 0 100 88 dc1.ad.homelab.internal.
+=== rekord A kontrolera
+dc1.ad.homelab.internal has address 192.168.1.40
+=== przekazywanie zapytań na zewnątrz
+debian.org has address 151.101.66.132
+...
+=== konta w domenie
+krbtgt
+Administrator
+Guest
+=== udziały kontrolera
+        sysvol          Disk
+        netlogon        Disk
+```
+
+Komentarz: kontroler domeny przejął DNS, publikuje rekordy SRV usług
+LDAP i Kerberos pod prawdziwym adresem, przekazuje zapytania spoza
+domeny do routera i udostępnia udziały sysvol i netlogon. Poziom
+funkcjonalności domeny odpowiada Windows Server 2008 R2 (domyślny dla
+Samby).
+
+---
+
+## Listing 5.75. Uwierzytelnienie Kerberos
+
+```console
+keinshur@kv235-965:~$ ssh -t … ansible@192.168.1.40 'kinit administrator@AD.HOMELAB.INTERNAL && klist'
+Password for administrator@AD.HOMELAB.INTERNAL:
+Warning: Your password will expire in 41 days on Wed Dec  2 21:04:13 2026
+Ticket cache: FILE:/tmp/krb5cc_1000
+Default principal: administrator@AD.HOMELAB.INTERNAL
+
+Valid starting     Expires            Service principal
+10/21/26 22:09:57  10/22/26 08:09:57  krbtgt/AD.HOMELAB.INTERNAL@AD.HOMELAB.INTERNAL
+        renew until 10/22/26 22:09:01
+```
+
+Komentarz: kontroler domeny wydał bilet TGT ważny 10 godzin i odnawialny
+przez 24 godziny. Ostrzeżenie o wygaśnięciu hasła po 42 dniach
+doprowadziło do wyłączenia wygasania haseł kont technicznych (ADR-017).
+
+---
+
+## Listing 5.76. DNS domeny z innej maszyny i trwałość po restarcie
+
+```console
+keinshur@kv235-965:~$ dig @192.168.1.40 +short dc1.ad.homelab.internal
+192.168.1.40
+keinshur@kv235-965:~$ dig @192.168.1.40 +short -t SRV _ldap._tcp.ad.homelab.internal
+0 100 389 dc1.ad.homelab.internal.
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'sudo reboot'
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'hostname -f; grep dc1 /etc/hosts; systemctl is-active samba-ad-dc'
+dc1.ad.homelab.internal
+192.168.1.40 dc1.ad.homelab.internal dc1
+active
+```
+
+Komentarz: rekordy domeny są dostępne dla innych maszyn w sieci.
+Po ponownym uruchomieniu cloud-init odtworzył /etc/hosts z szablonu
+podmienionego przez rolę samba_dc, a kontroler domeny wystartował
+automatycznie.
+
+---
+
+## Listing 5.77. Struktura katalogu
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 '…'
+=== OU
+OU=Grupy,OU=Homelab
+OU=Uzytkownicy,OU=Homelab
+OU=KontaUslugowe,OU=Homelab
+OU=Homelab
+OU=Domain Controllers
+=== obiekty w OU=Homelab
+CN=Anna Nowak,OU=Uzytkownicy,OU=Homelab
+CN=Jan Kowalski,OU=Uzytkownicy,OU=Homelab
+CN=grp-it-admins,OU=Grupy,OU=Homelab
+CN=svc-ldap-bind,OU=KontaUslugowe,OU=Homelab
+CN=grp-wiki-users,OU=Grupy,OU=Homelab
+CN=grp-gitea-users,OU=Grupy,OU=Homelab
+CN=grp-zabbix-users,OU=Grupy,OU=Homelab
+...
+=== członkowie grp-it-admins
+anna.nowak
+=== członkowie grp-gitea-users
+anna.nowak
+jan.kowalski
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 '…'
+userAccountControl: 66048
+userAccountControl: 66048
+```
+
+Komentarz: struktura jednostek organizacyjnych, grupy RBAC, konta
+użytkowników i konto usługowe utworzone przez Ansible. Wartość 66048
+(512 + 65536) oznacza zwykłe konto z flagą niewygasającego hasła dla
+kont Administrator i svc-ldap-bind.
+
+---
+
+## Listing 5.78. Idempotentność roli samba_dc
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/dc.yml
+...
+TASK [samba_dc : Utwórz jednostki organizacyjne] *******************************
+skipping: [dc1] => (item=OU=Homelab)
+skipping: [dc1] => (item=OU=Uzytkownicy,OU=Homelab)
+...
+TASK [samba_dc : Utwórz konta użytkowników] ************************************
+skipping: [dc1] => (item=(censored due to no_log))
+...
+PLAY RECAP *********************************************************************
+dc1                        : ok=23   changed=0    unreachable=0    failed=0    skipped=11   rescued=0    ignored=0
+```
+
+Komentarz: narzędzie samba-tool nie jest idempotentne, jednak dzięki
+wzorcowi „odczytaj stan, potem zmień” ponowne wykonanie roli nie
+wprowadza żadnych zmian. Hasła w pętlach są ukryte przez no_log.
+
+---
+
+## Listing 5.79. Wymuszenie szyfrowania przy logowaniu LDAP
+
+```console
+keinshur@kv235-965:~$ ldapsearch -H ldap://192.168.1.40 -x -D "svc-ldap-bind@ad.homelab.internal" -W …
+Enter LDAP Password:
+ldap_bind: Strong(er) authentication required (8)
+        additional info: BindSimple: Transport encryption required.
+```
+
+Komentarz: kontroler domeny odrzuca proste logowanie przez
+nieszyfrowany LDAP, chroniąc hasła przed przesłaniem jawnym tekstem.
+
+---
+
+## Listing 5.80. Odczyt katalogu kontem usługowym przez LDAPS
+
+```console
+keinshur@kv235-965:~$ LDAPTLS_REQCERT=never ldapsearch -H ldaps://192.168.1.40 -x \
+  -D "CN=svc-ldap-bind,OU=KontaUslugowe,OU=Homelab,DC=ad,DC=homelab,DC=internal" \
+  -y /tmp/ldap-bind-pw \
+  -b "OU=Homelab,DC=ad,DC=homelab,DC=internal" \
+  "(sAMAccountName=jan.kowalski)" cn memberOf
+# Jan Kowalski, Uzytkownicy, Homelab, ad.homelab.internal
+dn: CN=Jan Kowalski,OU=Uzytkownicy,OU=Homelab,DC=ad,DC=homelab,DC=internal
+cn: Jan Kowalski
+memberOf: CN=grp-gitea-users,OU=Grupy,OU=Homelab,DC=ad,DC=homelab,DC=internal
+memberOf: CN=grp-wiki-users,OU=Grupy,OU=Homelab,DC=ad,DC=homelab,DC=internal
+memberOf: CN=grp-zabbix-users,OU=Grupy,OU=Homelab,DC=ad,DC=homelab,DC=internal
+
+# search result
+search: 2
+result: 0 Success
+```
+
+Komentarz: konto usługowe odczytuje przez szyfrowane połączenie DN
+użytkownika i jego grupy, czyli dokładnie te informacje, których
+usługi używają do uwierzytelnienia i autoryzacji. Weryfikacja
+certyfikatu jest tymczasowo wyłączona do czasu wdrożenia urzędu
+certyfikacji.
+
+---
+
+## Listing 5.81. Strefa DNS usług
+
+```console
+keinshur@kv235-965:~$ dig @192.168.1.40 +short git.homelab.internal
+192.168.1.41
+keinshur@kv235-965:~$ dig @192.168.1.40 +short wiki.homelab.internal
+192.168.1.41
+keinshur@kv235-965:~$ dig @192.168.1.40 +short dc1.ad.homelab.internal
+192.168.1.40
+```
+
+Komentarz: kontroler domeny obsługuje dwie strefy: strefę domeny AD
+oraz strefę homelab.internal z adresami usług na svc01.
+
+---
+
+## Listingi kodu etapu 5 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.82 | infra/terraform/modules/vm/variables.tf (walidacja klonowania) |
+| 5.83 | infra/terraform/platform/dc1.tf |
+| 5.84 | infra/ansible/inventories/group_vars/domain_controllers/vars.yml |
+| 5.85 | infra/ansible/roles/samba_dc/templates/hosts.j2 |
+| 5.86 | infra/ansible/roles/samba_dc/tasks/main.yml |
+| 5.87 | infra/ansible/roles/samba_dc/tasks/directory.yml |
+| 5.88 | infra/ansible/roles/samba_dc/tasks/dns.yml |
+
+## Do uzupełnienia (etap 5)
+
+- [ ] Listing: komunikat walidacji modułu przy pełnym klonie bez magazynu (test z punktu 5.2)
+- [ ] Zrzuty: maszyna dc1 w Proxmox (opcje: autostart), zadania terraform@pve
+
+---
