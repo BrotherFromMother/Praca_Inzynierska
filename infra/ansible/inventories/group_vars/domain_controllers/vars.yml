@@ -1,11 +1,12 @@
 ---
 samba_dc_admin_password: "{{ vault_samba_admin_password }}"
-samba_dc_ldap_bind_password: "{{ vault_samba_ldap_bind_password }}"
+samba_dc_ldap_bind_password: "{{ ldap_bind_password }}"
 
 samba_dc_users:
   - name: jan.kowalski
     given_name: Jan
     surname: Kowalski
+    mail: jan.kowalski@homelab.internal
     password: "{{ vault_samba_user_jan_password }}"
     groups:
       - grp-gitea-users
@@ -14,6 +15,7 @@ samba_dc_users:
   - name: anna.nowak
     given_name: Anna
     surname: Nowak
+    mail: anna.nowak@homelab.internal
     password: "{{ vault_samba_user_anna_password }}"
     groups:
       - grp-it-admins

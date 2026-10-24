@@ -135,3 +135,35 @@
     label: "{{ item.item }}"
   when: ((item.stdout | regex_search('[0-9]+$') | int) // 65536) % 2 == 0
   changed_when: true
+
+# --- Atrybut mail użytkowników ---
+
+- name: Odczytaj adresy e-mail użytkowników
+  ansible.builtin.command:
+    argv:
+      - samba-tool
+      - user
+      - show
+      - "{{ item.name }}"
+      - --attributes=mail
+  loop: "{{ samba_dc_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: samba_dc_user_mail
+  changed_when: false
+
+- name: Ustaw adresy e-mail użytkowników
+  ansible.builtin.command:
+    argv: [ldbmodify, -H, /var/lib/samba/private/sam.ldb]
+    stdin: |
+      dn: {{ item.stdout_lines[0] | regex_replace('^dn: ', '') }}
+      changetype: modify
+      replace: mail
+      mail: {{ item.item.mail }}
+  loop: "{{ samba_dc_user_mail.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when:
+    - item.item.mail is defined
+    - item.item.mail not in item.stdout
+  changed_when: true
