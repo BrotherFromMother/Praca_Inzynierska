@@ -1,0 +1,11 @@
+---
+step_ca_image: smallstep/step-ca:0.30.2
+step_ca_stack_dir: /opt/stack/step-ca
+step_ca_name: Homelab Internal CA
+step_ca_dns_names:
+  - ca.homelab.internal
+  - step-ca
+step_ca_provisioner_name: admin
+step_ca_network: proxy
+step_ca_container_uid: 1000
+step_ca_root_cert_local: "{{ playbook_dir }}/../files/pki/root_ca.crt"

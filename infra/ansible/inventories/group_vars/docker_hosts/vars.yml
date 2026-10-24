@@ -1,0 +1,2 @@
+---
+step_ca_password: "{{ vault_step_ca_password }}"

@@ -1,0 +1,67 @@
+---
+- name: Utwórz katalogi usługi step-ca
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ step_ca_stack_dir }}", mode: "0755" }
+    - { path: "{{ step_ca_stack_dir }}/secrets", mode: "0711" }
+
+- name: Zapisz hasło urzędu certyfikacji
+  ansible.builtin.copy:
+    content: "{{ step_ca_password }}"
+    dest: "{{ step_ca_stack_dir }}/secrets/step_ca_password"
+    owner: "{{ step_ca_container_uid }}"
+    group: "{{ step_ca_container_uid }}"
+    mode: "0400"
+  no_log: true
+
+- name: Sprawdź, czy istnieje sieć Dockera dla usług za Traefikiem
+  ansible.builtin.command:
+    argv: [docker, network, inspect, "{{ step_ca_network }}"]
+  register: step_ca_network_check
+  changed_when: false
+  failed_when: false
+
+- name: Utwórz sieć Dockera dla usług za Traefikiem
+  ansible.builtin.command:
+    argv: [docker, network, create, "{{ step_ca_network }}"]
+  when: step_ca_network_check.rc != 0
+  changed_when: true
+
+- name: Utwórz plik Compose usługi step-ca
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ step_ca_stack_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Uruchom usługę step-ca
+  community.docker.docker_compose_v2:
+    project_src: "{{ step_ca_stack_dir }}"
+    state: present
+
+- name: Poczekaj na utworzenie certyfikatu głównego
+  ansible.builtin.wait_for:
+    path: /var/lib/docker/volumes/step-ca_step-ca-data/_data/certs/root_ca.crt
+    timeout: 120
+
+- name: Pobierz certyfikat główny do repozytorium
+  ansible.builtin.fetch:
+    src: /var/lib/docker/volumes/step-ca_step-ca-data/_data/certs/root_ca.crt
+    dest: "{{ step_ca_root_cert_local }}"
+    flat: true
+
+- name: Odczytaj odcisk certyfikatu głównego
+  ansible.builtin.command:
+    argv: [docker, exec, step-ca, step, certificate, fingerprint, certs/root_ca.crt]
+  register: step_ca_fingerprint
+  changed_when: false
+
+- name: Wyświetl odcisk certyfikatu głównego
+  ansible.builtin.debug:
+    msg: "Odcisk certyfikatu głównego (SHA-256): {{ step_ca_fingerprint.stdout }}"

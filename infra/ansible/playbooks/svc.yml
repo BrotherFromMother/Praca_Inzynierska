@@ -7,3 +7,4 @@
     - base
     - data_disk
     - docker
+    - step_ca
