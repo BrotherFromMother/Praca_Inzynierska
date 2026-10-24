@@ -1,0 +1,133 @@
+---
+# Certyfikat LDAPS kontrolera domeny ze step-ca.
+# Klucz prywatny powstaje i zostaje na kontrolerze; do urzędu trafia tylko wniosek CSR.
+
+- name: Utwórz katalog certyfikatu kontrolera domeny
+  ansible.builtin.file:
+    path: "{{ samba_tls_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Sprawdź ważność obecnego certyfikatu
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - x509
+      - -checkend
+      - "{{ samba_tls_renew_before_days * 86400 }}"
+      - -noout
+      - -in
+      - "{{ samba_tls_dir }}/cert.pem"
+  register: samba_tls_check
+  changed_when: false
+  failed_when: false
+
+- name: Ustal, czy potrzebny jest nowy certyfikat
+  ansible.builtin.set_fact:
+    samba_tls_needed: "{{ samba_tls_check.rc != 0 }}"
+
+- name: Wygeneruj klucz prywatny kontrolera domeny
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - genpkey
+      - -algorithm
+      - EC
+      - -pkeyopt
+      - ec_paramgen_curve:P-256
+      - -out
+      - "{{ samba_tls_dir }}/key.pem"
+    creates: "{{ samba_tls_dir }}/key.pem"
+
+- name: Ustaw uprawnienia klucza prywatnego
+  ansible.builtin.file:
+    path: "{{ samba_tls_dir }}/key.pem"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Utwórz wniosek o certyfikat (CSR)
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -key
+      - "{{ samba_tls_dir }}/key.pem"
+      - -out
+      - "{{ samba_tls_dir }}/request.csr"
+      - -subj
+      - "/CN={{ samba_tls_fqdn }}"
+      - -addext
+      - "subjectAltName=DNS:{{ samba_tls_fqdn }},DNS:{{ inventory_hostname }},IP:{{ ansible_host }}"
+  when: samba_tls_needed
+  changed_when: true
+
+- name: Odczytaj wniosek o certyfikat
+  ansible.builtin.slurp:
+    src: "{{ samba_tls_dir }}/request.csr"
+  register: samba_tls_csr
+  when: samba_tls_needed
+
+- name: Przekaż wniosek do urzędu certyfikacji
+  ansible.builtin.command:
+    argv: [docker, exec, -i, step-ca, sh, -c, "cat > /tmp/{{ inventory_hostname }}.csr"]
+    stdin: "{{ samba_tls_csr.content | b64decode }}"
+  delegate_to: "{{ samba_tls_ca_host }}"
+  when: samba_tls_needed
+  changed_when: true
+
+- name: Podpisz wniosek w urzędzie certyfikacji
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - step-ca
+      - step
+      - ca
+      - sign
+      - "/tmp/{{ inventory_hostname }}.csr"
+      - "/tmp/{{ inventory_hostname }}.crt"
+      - "--provisioner={{ samba_tls_provisioner }}"
+      - --provisioner-password-file=/home/step/secrets/password
+      - --ca-url=https://step-ca:9000
+      - --root=/home/step/certs/root_ca.crt
+      - "--not-after={{ samba_tls_cert_duration }}"
+      - --force
+  delegate_to: "{{ samba_tls_ca_host }}"
+  when: samba_tls_needed
+  changed_when: true
+
+- name: Odczytaj podpisany certyfikat
+  ansible.builtin.command:
+    argv: [docker, exec, step-ca, cat, "/tmp/{{ inventory_hostname }}.crt"]
+  register: samba_tls_signed
+  delegate_to: "{{ samba_tls_ca_host }}"
+  when: samba_tls_needed
+  changed_when: false
+
+- name: Zapisz certyfikat na kontrolerze domeny
+  ansible.builtin.copy:
+    content: "{{ samba_tls_signed.stdout }}\n"
+    dest: "{{ samba_tls_dir }}/cert.pem"
+    owner: root
+    group: root
+    mode: "0644"
+  when: samba_tls_needed
+  notify: Uruchom ponownie kontroler domeny
+
+- name: Wskaż Sambie nowy certyfikat
+  community.general.ini_file:
+    path: /etc/samba/smb.conf
+    section: global
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { option: tls enabled, value: "yes" }
+    - { option: tls keyfile, value: "{{ samba_tls_dir }}/key.pem" }
+    - { option: tls certfile, value: "{{ samba_tls_dir }}/cert.pem" }
+    - { option: tls cafile, value: "{{ samba_tls_root_ca }}" }
+  notify: Uruchom ponownie kontroler domeny

@@ -1,0 +1,5 @@
+---
+- name: Uruchom ponownie kontroler domeny
+  ansible.builtin.systemd_service:
+    name: samba-ad-dc
+    state: restarted

@@ -9,3 +9,6 @@ step_ca_provisioner_name: admin
 step_ca_network: proxy
 step_ca_container_uid: 1000
 step_ca_root_cert_local: "{{ playbook_dir }}/../files/pki/root_ca.crt"
+
+step_ca_infra_provisioner: infra
+step_ca_infra_cert_duration: 8760h

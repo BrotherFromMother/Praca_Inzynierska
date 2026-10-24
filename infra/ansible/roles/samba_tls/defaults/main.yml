@@ -1,0 +1,9 @@
+---
+samba_tls_dns_domain: ad.homelab.internal
+samba_tls_fqdn: "{{ inventory_hostname }}.{{ samba_tls_dns_domain }}"
+samba_tls_dir: /var/lib/samba/private/tls-stepca
+samba_tls_root_ca: /usr/local/share/ca-certificates/homelab-root-ca.crt
+samba_tls_ca_host: svc01
+samba_tls_provisioner: infra
+samba_tls_cert_duration: 8760h
+samba_tls_renew_before_days: 30

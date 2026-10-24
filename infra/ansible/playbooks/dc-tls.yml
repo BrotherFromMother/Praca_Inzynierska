@@ -1,0 +1,7 @@
+---
+- name: Certyfikat LDAPS kontrolera domeny
+  hosts: domain_controllers
+  become: true
+
+  roles:
+    - samba_tls

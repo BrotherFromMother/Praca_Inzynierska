@@ -65,3 +65,31 @@
 - name: Wyświetl odcisk certyfikatu głównego
   ansible.builtin.debug:
     msg: "Odcisk certyfikatu głównego (SHA-256): {{ step_ca_fingerprint.stdout }}"
+
+- name: Pobierz listę provisionerów urzędu
+  ansible.builtin.command:
+    argv: [docker, exec, step-ca, step, ca, provisioner, list]
+  register: step_ca_provisioners
+  changed_when: false
+
+- name: Dodaj provisioner dla certyfikatów infrastruktury
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - step-ca
+      - step
+      - ca
+      - provisioner
+      - add
+      - "{{ step_ca_infra_provisioner }}"
+      - --type=JWK
+      - --create
+      - --password-file=/home/step/secrets/password
+      - "--x509-default-dur={{ step_ca_infra_cert_duration }}"
+      - "--x509-max-dur={{ step_ca_infra_cert_duration }}"
+  when: >-
+    step_ca_infra_provisioner not in
+    (step_ca_provisioners.stdout | from_json | map(attribute='name') | list)
+  changed_when: true
+  notify: Uruchom ponownie step-ca
