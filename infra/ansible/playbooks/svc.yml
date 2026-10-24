@@ -1,0 +1,9 @@
+---
+- name: Konfiguracja hosta usług
+  hosts: docker_hosts
+  become: true
+
+  roles:
+    - base
+    - data_disk
+    - docker

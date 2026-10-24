@@ -1,0 +1,23 @@
+---
+- name: Sprawdź, czy dysk danych jest podłączony
+  ansible.builtin.stat:
+    path: "{{ data_disk_device }}"
+  register: data_disk_dev
+
+- name: Przerwij, jeśli dysku danych nie ma
+  ansible.builtin.assert:
+    that: data_disk_dev.stat.exists
+    fail_msg: "Brak dysku danych {{ data_disk_device }}. Sprawdź konfigurację maszyny w Terraform."
+
+- name: Utwórz system plików na dysku danych
+  community.general.filesystem:
+    fstype: "{{ data_disk_fstype }}"
+    dev: "{{ data_disk_device }}"
+
+- name: Zamontuj dysk danych
+  ansible.posix.mount:
+    path: "{{ data_disk_mount_point }}"
+    src: "{{ data_disk_device }}"
+    fstype: "{{ data_disk_fstype }}"
+    opts: defaults,nofail
+    state: mounted
