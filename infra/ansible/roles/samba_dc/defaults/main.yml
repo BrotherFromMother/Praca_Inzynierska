@@ -17,6 +17,7 @@ samba_dc_packages:
   - dnsutils
   - acl
   - attr
+  - python3-setproctitle
 
 # --- Struktura katalogu ---
 samba_dc_base_dn: "DC={{ samba_dc_dns_domain.split('.') | join(',DC=') }}"

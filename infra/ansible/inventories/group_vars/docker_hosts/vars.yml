@@ -1,2 +1,5 @@
 ---
 step_ca_password: "{{ vault_step_ca_password }}"
+gitea_db_password: "{{ vault_gitea_db_password }}"
+gitea_secret_key: "{{ vault_gitea_secret_key }}"
+gitea_internal_token: "{{ vault_gitea_internal_token }}"

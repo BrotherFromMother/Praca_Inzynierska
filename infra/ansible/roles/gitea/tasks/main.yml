@@ -1,0 +1,67 @@
+---
+- name: Utwórz katalog usługi Gitea
+  ansible.builtin.file:
+    path: "{{ gitea_stack_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Utwórz plik Compose usługi Gitea
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ gitea_stack_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Uruchom usługę Gitea
+  community.docker.docker_compose_v2:
+    project_src: "{{ gitea_stack_dir }}"
+    state: present
+    wait: true
+
+- name: Poczekaj, aż Gitea odpowie przez Traefika
+  ansible.builtin.uri:
+    url: "https://{{ gitea_domain }}/api/healthz"
+    status_code: 200
+  register: gitea_health
+  until: gitea_health.status == 200
+  retries: 30
+  delay: 5
+
+- name: Pobierz listę źródeł uwierzytelniania
+  ansible.builtin.command:
+    argv: [docker, exec, -u, git, gitea, gitea, admin, auth, list]
+  register: gitea_auth_list
+  changed_when: false
+
+- name: Dodaj uwierzytelnianie przez Active Directory
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -u
+      - git
+      - gitea
+      - gitea
+      - admin
+      - auth
+      - add-ldap
+      - "--name={{ gitea_ldap_name }}"
+      - --security-protocol=LDAPS
+      - "--host={{ gitea_ldap_host }}"
+      - "--port={{ gitea_ldap_port }}"
+      - "--bind-dn={{ gitea_ldap_bind_dn }}"
+      - "--bind-password={{ gitea_ldap_bind_password }}"
+      - "--user-search-base={{ gitea_ldap_user_base }}"
+      - "--user-filter=(&(objectClass=user)(sAMAccountName=%s)(memberOf={{ gitea_ldap_user_group_dn }}))"
+      - "--admin-filter=(memberOf={{ gitea_ldap_admin_group_dn }})"
+      - --username-attribute=sAMAccountName
+      - --firstname-attribute=givenName
+      - --surname-attribute=sn
+      - --email-attribute=mail
+      - --synchronize-users
+  when: gitea_ldap_name not in gitea_auth_list.stdout
+  changed_when: true
+  no_log: true

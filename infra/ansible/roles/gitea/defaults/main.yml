@@ -1,0 +1,17 @@
+---
+gitea_image: gitea/gitea:28.2.0
+gitea_db_image: postgres:17.11-alpine
+gitea_stack_dir: /opt/stack/gitea
+gitea_domain: git.homelab.internal
+gitea_network: proxy
+gitea_ca_bundle: /etc/ssl/certs/ca-certificates.crt
+
+gitea_ldap_name: homelab-ad
+gitea_ldap_host: dc1.ad.homelab.internal
+gitea_ldap_port: 636
+gitea_ldap_bind_dn: "{{ ldap_bind_dn }}"
+gitea_ldap_bind_password: "{{ ldap_bind_password }}"
+gitea_ldap_base_dn: DC=ad,DC=homelab,DC=internal
+gitea_ldap_user_base: "OU=Uzytkownicy,OU=Homelab,{{ gitea_ldap_base_dn }}"
+gitea_ldap_user_group_dn: "CN=grp-gitea-users,OU=Grupy,OU=Homelab,{{ gitea_ldap_base_dn }}"
+gitea_ldap_admin_group_dn: "CN=grp-it-admins,OU=Grupy,OU=Homelab,{{ gitea_ldap_base_dn }}"

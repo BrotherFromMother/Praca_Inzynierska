@@ -10,3 +10,4 @@
     - step_ca
     - ca_trust
     - traefik
+    - gitea
