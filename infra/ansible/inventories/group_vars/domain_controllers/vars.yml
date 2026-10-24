@@ -28,3 +28,4 @@ samba_dc_service_records:
   - { name: git, ip: 192.168.1.41 }
   - { name: wiki, ip: 192.168.1.41 }
   - { name: zabbix, ip: 192.168.1.41 }
+  - { name: whoami, ip: 192.168.1.41 }

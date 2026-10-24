@@ -8,3 +8,5 @@
     - data_disk
     - docker
     - step_ca
+    - ca_trust
+    - traefik

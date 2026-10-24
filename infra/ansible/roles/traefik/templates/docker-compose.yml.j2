@@ -1,0 +1,38 @@
+# Plik zarządzany przez Ansible (rola traefik).
+services:
+  traefik:
+    image: {{ traefik_image }}
+    container_name: traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      LEGO_CA_CERTIFICATES: /certs/root_ca.crt
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - {{ traefik_root_ca_path }}:/certs/root_ca.crt:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/acme
+    networks:
+      - {{ traefik_network }}
+{% if traefik_whoami_enabled %}
+
+  whoami:
+    image: {{ traefik_whoami_image }}
+    container_name: whoami
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(`{{ traefik_whoami_host }}`)
+      - traefik.http.routers.whoami.entrypoints=websecure
+    networks:
+      - {{ traefik_network }}
+{% endif %}
+
+volumes:
+  traefik-acme:
+
+networks:
+  {{ traefik_network }}:
+    external: true

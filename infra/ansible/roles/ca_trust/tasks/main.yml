@@ -1,0 +1,14 @@
+---
+- name: Zainstaluj pakiet z magazynem certyfikatów
+  ansible.builtin.apt:
+    name: ca-certificates
+    state: present
+
+- name: Skopiuj certyfikat główny urzędu certyfikacji
+  ansible.builtin.copy:
+    src: "{{ ca_trust_root_cert }}"
+    dest: "{{ ca_trust_dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Przebuduj magazyn zaufanych certyfikatów

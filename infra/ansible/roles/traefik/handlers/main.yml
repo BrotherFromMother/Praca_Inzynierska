@@ -1,0 +1,7 @@
+---
+- name: Uruchom ponownie Traefika
+  community.docker.docker_compose_v2:
+    project_src: "{{ traefik_stack_dir }}"
+    state: restarted
+    services:
+      - traefik

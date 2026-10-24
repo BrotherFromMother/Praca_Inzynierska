@@ -1,0 +1,31 @@
+---
+- name: Utwórz katalog usługi Traefik
+  ansible.builtin.file:
+    path: "{{ traefik_stack_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Utwórz konfigurację statyczną Traefika
+  ansible.builtin.template:
+    src: traefik.yml.j2
+    dest: "{{ traefik_stack_dir }}/traefik.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Uruchom ponownie Traefika
+
+- name: Utwórz plik Compose usługi Traefik
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ traefik_stack_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Uruchom usługę Traefik
+  community.docker.docker_compose_v2:
+    project_src: "{{ traefik_stack_dir }}"
+    state: present
+    remove_orphans: true
