@@ -30,6 +30,7 @@ konsekwencje.
 | ADR-020 | Reverse proxy Traefik                     | przyjęta | 2026-10-24 |
 | ADR-021 | Gitea z izolowaną bazą i integracją z AD  | przyjęta | 2026-10-24 |
 | ADR-022 | Przypinanie i weryfikacja wersji obrazów  | przyjęta | 2026-10-24 |
+| ADR-023 | BookStack: obraz LinuxServer.io i role   | przyjęta | 2026-10-24 |
 
 ---
 
@@ -946,6 +947,45 @@ aktualizacji.
 ### Konsekwencje
 - Brak automatycznego powiadamiania o podatnościach w obrazach;
   skanowanie obrazów (np. Trivy) jako kierunek rozwoju.
+
+---
+
+## ADR-023: BookStack z obrazem LinuxServer.io i mapowaniem ról
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Kontekst
+Środowisko wymaga bazy wiedzy z logowaniem kontami domeny i rolami
+zależnymi od grup. Projekt BookStack nie publikuje oficjalnego obrazu
+Docker. BookStack jest napisany w PHP, a w październiku 2026 r.
+opublikowano krytyczne podatności silnika PHP (PHP2Shell).
+
+### Decyzja
+- Obraz lscr.io/linuxserver/bookstack:v26.09.2-ls292 (BookStack
+  26.09.2, PHP 8.5.12 zbudowane 21.10.2026, czyli z poprawką PHP2Shell)
+  oraz MariaDB 11.8.9 w sieci wewnętrznej bookstack-internal.
+- Logowanie przez LDAPS kontem svc-ldap-bind z weryfikacją certyfikatu
+  (LDAP_TLS_CA_CERT); dostęp dla członków grp-wiki-users.
+- Identyfikacja użytkowników po atrybucie objectGUID (niezmiennym przy
+  zmianie nazwy konta).
+- Mapowanie grup na role przez identyfikatory zewnętrzne ról:
+  Admin ↔ grp-it-admins, Editor ↔ grp-wiki-users; ustawiane poleceniem
+  SQL z kontrolą liczby zmienionych wierszy (ROW_COUNT), synchronizowane
+  przy każdym logowaniu.
+- Usunięcie domyślnego konta admin@admin.com po pierwszym logowaniu
+  administratora z AD.
+
+### Uzasadnienie
+- LinuxServer.io utrzymuje obraz i wydał wersję z poprawionym PHP
+  w dniu publikacji łatek; wersję PHP zweryfikowano przed przypięciem.
+- Mapowanie grup na role realizuje RBAC bez ręcznej konfiguracji
+  uprawnień w aplikacji.
+
+### Konsekwencje
+- Zależność od dostawcy obrazu spoza projektu BookStack.
+- Domyślne konto aplikacji wymagało ręcznego usunięcia; automatyzacja
+  tego kroku jako rozszerzenie.
 
 ---
 

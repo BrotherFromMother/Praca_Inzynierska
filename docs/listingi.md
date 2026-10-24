@@ -1748,3 +1748,96 @@ domeny (rozdzielony DNS).
 - [ ] Wersja Traefika i whoami w dzienniku
 
 ---
+
+# Etap 7: BookStack
+
+## Listing 5.112. Wersja PHP w obrazie BookStack
+
+```console
+ansible@svc01:~$ docker image inspect lscr.io/linuxserver/bookstack:latest --format '{{ index .Config.Labels "org.opencontainers.image.version" }}'
+v26.09.2-ls292
+ansible@svc01:~$ docker run --rm --entrypoint php lscr.io/linuxserver/bookstack:latest -v | head -1
+PHP 8.5.12 (cli) (built: Oct 21 2026 16:29:26) (NTS)
+ansible@svc01:~$ docker run --rm mariadb:11-noble mariadbd --version
+mariadbd  Ver 11.8.9-MariaDB-ubu2404 for debian-linux-gnu on x86_64 (mariadb.org binary distribution)
+```
+
+Komentarz: obraz zawiera PHP 8.5.12, czyli wersję z poprawką podatności
+PHP2Shell, zbudowaną w dniu publikacji łatek. Weryfikacja wersji
+komponentu przed przypięciem obrazu jest elementem kontroli łańcucha
+dostaw (ADR-022, ADR-023).
+
+---
+
+## Listing 5.113. Mapowanie grup AD na role BookStacka
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'docker exec bookstack-db sh -c '…' SELECT display_name, system_name, external_auth_id FROM roles;'
++--------------+-------------+------------------+
+| display_name | system_name | external_auth_id |
++--------------+-------------+------------------+
+| Admin        | admin       | grp-it-admins    |
+| Editor       |             | grp-wiki-users   |
+| Viewer       |             |                  |
+| Public       | public      |                  |
++--------------+-------------+------------------+
+```
+
+Komentarz: identyfikatory zewnętrzne ról wiążą je z grupami katalogu.
+Ponowne wykonanie roli nie zmienia wierszy (ROW_COUNT = 0), co zapewnia
+idempotentność polecenia SQL.
+
+---
+
+## Listing 5.114. Role użytkowników po pierwszym logowaniu
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'docker exec bookstack-db sh -c '…' SELECT u.name, u.email, r.display_name AS rola FROM users u JOIN role_user ru ON …'
++--------------+-------------------------------+--------+
+| name         | email                         | rola   |
++--------------+-------------------------------+--------+
+| Anna Nowak   | anna.nowak@homelab.internal   | Admin  |
+| Anna Nowak   | anna.nowak@homelab.internal   | Editor |
+| Guest        | guest@example.com             | Public |
+| Jan Kowalski | jan.kowalski@homelab.internal | Editor |
++--------------+-------------------------------+--------+
+```
+
+Komentarz: konta zostały utworzone przy pierwszym logowaniu kontami
+domeny, a role przypisane automatycznie na podstawie grup. Domyślne
+konto admin@admin.com zostało usunięte; konto Guest jest kontem
+systemowym dla niezalogowanych.
+
+---
+
+## Listing 5.115. Reguła NRPT na stacji administratora
+
+```console
+PS C:\WINDOWS\system32> Add-DnsClientNrptRule -Namespace ".homelab.internal" -NameServers "192.168.1.40"
+PS C:\WINDOWS\system32> Clear-DnsClientCache
+PS C:\WINDOWS\system32> Resolve-DnsName wiki.homelab.internal
+
+Name                                           Type   TTL   Section    IPAddress
+----                                           ----   ---   -------    ---------
+wiki.homelab.internal                          A      900   Answer     192.168.1.41
+```
+
+Komentarz: reguła tabeli zasad rozpoznawania nazw kieruje zapytania
+o domenę homelab.internal do kontrolera domeny niezależnie od kart
+sieciowych stacji (rozdzielony DNS), rozwiązując problem z listingu 5.99.
+
+---
+
+## Listingi kodu etapu 7 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.116 | infra/ansible/roles/bookstack/templates/docker-compose.yml.j2 |
+| 5.117 | infra/ansible/roles/bookstack/tasks/main.yml |
+| 5.118 | infra/ansible/roles/bookstack/defaults/main.yml |
+
+## Do uzupełnienia (etap 7)
+
+- [ ] Zrzuty: lista użytkowników BookStacka z rolami, profil Jana (Editor), kłódka na wiki.homelab.internal
+
+---
