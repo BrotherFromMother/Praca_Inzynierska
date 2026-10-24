@@ -11,3 +11,4 @@
     - ca_trust
     - traefik
     - gitea
+    - bookstack

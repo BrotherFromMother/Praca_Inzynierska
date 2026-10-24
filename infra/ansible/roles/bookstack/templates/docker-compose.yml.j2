@@ -1,0 +1,76 @@
+# Plik zarządzany przez Ansible (rola bookstack). Zawiera sekrety: tryb 0600.
+services:
+  bookstack:
+    image: {{ bookstack_image }}
+    container_name: bookstack
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Europe/Warsaw
+      APP_URL: https://{{ bookstack_domain }}
+      APP_KEY: "{{ bookstack_app_key }}"
+      DB_HOST: bookstack-db
+      DB_PORT: "3306"
+      DB_DATABASE: bookstack
+      DB_USERNAME: bookstack
+      DB_PASSWORD: "{{ bookstack_db_password }}"
+      AUTH_METHOD: ldap
+      LDAP_SERVER: {{ bookstack_ldap_server }}
+      LDAP_BASE_DN: "{{ bookstack_ldap_user_base }}"
+      LDAP_DN: "{{ bookstack_ldap_bind_dn }}"
+      LDAP_PASS: "{{ bookstack_ldap_bind_password }}"
+      LDAP_USER_FILTER: "(&(objectClass=user)(sAMAccountName={user})(memberOf={{ bookstack_ldap_user_group_dn }}))"
+      LDAP_VERSION: "3"
+      LDAP_ID_ATTRIBUTE: BIN;objectGUID
+      LDAP_EMAIL_ATTRIBUTE: mail
+      LDAP_DISPLAY_NAME_ATTRIBUTE: cn
+      LDAP_FOLLOW_REFERRALS: "false"
+      LDAP_TLS_CA_CERT: /certs/root_ca.crt
+      LDAP_USER_TO_GROUPS: "true"
+      LDAP_GROUP_ATTRIBUTE: memberOf
+      LDAP_REMOVE_FROM_GROUPS: "true"
+    volumes:
+      - bookstack-config:/config
+      - {{ bookstack_root_ca }}:/certs/root_ca.crt:ro
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network={{ bookstack_network }}
+      - traefik.http.routers.bookstack.rule=Host(`{{ bookstack_domain }}`)
+      - traefik.http.routers.bookstack.entrypoints=websecure
+      - traefik.http.services.bookstack.loadbalancer.server.port=80
+    networks:
+      - {{ bookstack_network }}
+      - bookstack-internal
+    depends_on:
+      bookstack-db:
+        condition: service_healthy
+
+  bookstack-db:
+    image: {{ bookstack_db_image }}
+    container_name: bookstack-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: "{{ bookstack_db_root_password }}"
+      MARIADB_DATABASE: bookstack
+      MARIADB_USER: bookstack
+      MARIADB_PASSWORD: "{{ bookstack_db_password }}"
+    volumes:
+      - bookstack-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - bookstack-internal
+
+volumes:
+  bookstack-config:
+  bookstack-db:
+
+networks:
+  {{ bookstack_network }}:
+    external: true
+  bookstack-internal:
+    internal: true

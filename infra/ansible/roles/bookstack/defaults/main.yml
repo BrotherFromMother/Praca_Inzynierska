@@ -1,0 +1,18 @@
+---
+bookstack_image: lscr.io/linuxserver/bookstack:v26.09.2-ls292
+bookstack_db_image: mariadb:11.8.9-noble
+bookstack_stack_dir: /opt/stack/bookstack
+bookstack_domain: wiki.homelab.internal
+bookstack_network: proxy
+bookstack_root_ca: /usr/local/share/ca-certificates/homelab-root-ca.crt
+
+bookstack_ldap_server: ldaps://dc1.ad.homelab.internal:636
+bookstack_ldap_bind_dn: "{{ ldap_bind_dn }}"
+bookstack_ldap_bind_password: "{{ ldap_bind_password }}"
+bookstack_ldap_base_dn: DC=ad,DC=homelab,DC=internal
+bookstack_ldap_user_base: "OU=Uzytkownicy,OU=Homelab,{{ bookstack_ldap_base_dn }}"
+bookstack_ldap_user_group_dn: "CN=grp-wiki-users,OU=Grupy,OU=Homelab,{{ bookstack_ldap_base_dn }}"
+
+bookstack_role_mapping:
+  - { role: admin, group: grp-it-admins }
+  - { role: editor, group: grp-wiki-users }
