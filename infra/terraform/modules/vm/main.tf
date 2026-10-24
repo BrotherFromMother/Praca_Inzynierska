@@ -46,6 +46,20 @@ resource "proxmox_virtual_environment_vm" "this" {
 
   serial_device {}
 
+  # Opcjonalny dysk danych (scsi1), tworzony tylko gdy podano rozmiar.
+  dynamic "disk" {
+    for_each = var.data_disk_size_gb == null ? [] : [var.data_disk_size_gb]
+
+    content {
+      datastore_id = var.data_disk_datastore_id
+      interface    = "scsi1"
+      size         = disk.value
+      file_format  = "raw"
+      discard      = "on"
+      iothread     = true
+    }
+  }
+
   initialization {
     datastore_id = var.datastore_id
     upgrade      = false

@@ -20,3 +20,8 @@ output "dc1_ip" {
   description = "Adres IPv4 kontrolera domeny"
   value       = module.dc1.ip
 }
+
+output "svc01_ip" {
+  description = "Adres IPv4 hosta usług"
+  value       = module.svc01.ip
+}

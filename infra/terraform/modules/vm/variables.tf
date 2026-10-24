@@ -126,3 +126,22 @@ variable "ssh_public_key" {
   description = "Klucz publiczny SSH konta automatyzacji"
   type        = string
 }
+
+# --- Dodatkowy dysk danych (opcjonalny) ---
+
+variable "data_disk_size_gb" {
+  description = "Rozmiar dodatkowego dysku danych w GB; brak oznacza brak dysku"
+  type        = number
+  default     = null
+}
+
+variable "data_disk_datastore_id" {
+  description = "Magazyn dodatkowego dysku danych"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = (var.data_disk_size_gb == null) == (var.data_disk_datastore_id == null)
+    error_message = "Dysk danych wymaga jednocześnie rozmiaru i magazynu."
+  }
+}
