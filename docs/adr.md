@@ -25,6 +25,11 @@ konsekwencje.
 | ADR-015 | Kontroler domeny: Samba AD w VM           | przyjęta | 2026-10-22 |
 | ADR-016 | Sekrety Ansible: Ansible Vault            | przyjęta | 2026-10-22 |
 | ADR-017 | Struktura katalogu i integracja LDAPS     | przyjęta | 2026-10-22 |
+| ADR-018 | Host usług svc01 z dyskiem danych        | przyjęta | 2026-10-24 |
+| ADR-019 | Wewnętrzny urząd certyfikacji step-ca     | przyjęta | 2026-10-24 |
+| ADR-020 | Reverse proxy Traefik                     | przyjęta | 2026-10-24 |
+| ADR-021 | Gitea z izolowaną bazą i integracją z AD  | przyjęta | 2026-10-24 |
+| ADR-022 | Przypinanie i weryfikacja wersji obrazów  | przyjęta | 2026-10-24 |
 
 ---
 
@@ -763,6 +768,184 @@ grup. Domyślne hasła w domenie wygasają po 42 dniach.
   klientów jest wyłączona.
 - Narzędzie samba-tool nie jest idempotentne; zadania Ansible stosują
   wzorzec odczytu stanu przed zmianą.
+
+---
+
+## ADR-018: Host usług svc01 z osobnym dyskiem danych
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Kontekst
+Usługi w kontenerach (urząd certyfikacji, reverse proxy, Gitea,
+BookStack, Zabbix) wymagają hosta z Dockerem. Obrazy i dane usług będą
+rosły, a dysk szablonu ma 10 GB.
+
+### Decyzja
+- Maszyna svc01 (VMID 101, 192.168.1.41): pełny klon na local-lvm,
+  4 rdzenie, 6 GB RAM, autostart.
+- Osobny dysk danych 40 GB (scsi1), sformatowany ext4 i montowany
+  w /var/lib/docker przez rolę data_disk, przed instalacją Dockera;
+  stała nazwa urządzenia z /dev/disk/by-id, opcja nofail.
+- Moduł Terraform rozszerzony o opcjonalny dysk danych (blok dynamic)
+  z walidacją rozmiaru i magazynu.
+- Każda usługa w osobnym katalogu /opt/stack/<usługa> z własnym plikiem
+  Compose generowanym przez Ansible; dane w wolumenach nazwanych.
+
+### Uzasadnienie
+- Zapełnienie dysku danymi nie blokuje systemu operacyjnego.
+- Dane usług znajdują się na jednym, wyodrębnionym dysku, co upraszcza
+  kopie zapasowe i odtwarzanie (etap 9).
+- Osobne pliki Compose pozwalają uruchamiać, aktualizować i odtwarzać
+  usługi niezależnie.
+
+### Konsekwencje
+- Montowanie dysku po instalacji Dockera przesłoniłoby istniejące dane;
+  kolejność ról jest istotna.
+
+---
+
+## ADR-019: Wewnętrzny urząd certyfikacji step-ca
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Kontekst
+ADR-012 przyjął własny urząd certyfikacji. Usługi webowe wymagają
+automatycznie odnawianych certyfikatów, a kontroler domeny certyfikatu
+LDAPS z rozszerzeniem SAN (certyfikat wygenerowany przez Sambę nie
+zawiera SAN i jest odrzucany przez klientów w języku Go).
+
+### Decyzja
+- step-ca 0.30.2 w kontenerze na svc01, zainicjowany automatycznie,
+  z hasłem kluczy w Ansible Vault; dwa poziomy (główny i pośredni).
+- Usługi webowe: provisioner ACME, certyfikaty 24-godzinne zamawiane
+  i odnawiane przez Traefik (wyzwanie HTTP-01).
+- Kontroler domeny: provisioner JWK infra, certyfikat roczny wydawany
+  na podstawie wniosku CSR wygenerowanego na dc1 (klucz prywatny nie
+  opuszcza kontrolera); odnawiany przez Ansible 30 dni przed
+  wygaśnięciem.
+- Certyfikat główny przechowywany w repozytorium (jest publiczny)
+  i rozsyłany do magazynów zaufania serwerów rolą ca_trust; na stacji
+  administratora import ręczny po weryfikacji odcisku.
+
+### Rozważane alternatywy dla certyfikatu kontrolera domeny
+1. Wyłączenie weryfikacji certyfikatu w usługach (ryzyko ataku
+   man-in-the-middle i przechwycenia haseł użytkowników)
+2. Zaufanie do urzędu wygenerowanego przez Sambę (odrzucone: brak SAN)
+3. Certyfikat 24-godzinny przez ACME (codzienny restart Samby)
+
+### Uzasadnienie
+- Jeden urząd certyfikacji dla całego środowiska i jeden certyfikat
+  główny do rozesłania.
+- Krótkotrwałe certyfikaty ograniczają skutki wycieku klucza tam, gdzie
+  odnawianie nie zakłóca pracy usługi; dłuższa ważność tam, gdzie
+  wymiana wymaga restartu.
+
+### Konsekwencje
+- Wolumen step-ca (klucze urzędu) jest krytyczny dla kopii zapasowych:
+  jego utrata wymusza wymianę certyfikatu głównego na wszystkich
+  klientach, co przećwiczono po zmianie hasła urzędu.
+- Rozesłanie certyfikatu na stacje z Windows w domenie powinno odbywać
+  się przez GPO (poza zakresem).
+
+---
+
+## ADR-020: Reverse proxy Traefik
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Kontekst
+Usługi muszą być dostępne przez HTTPS pod własnymi nazwami, bez
+wystawiania ich portów bezpośrednio.
+
+### Rozważane opcje
+1. Nginx (konfiguracja w plikach, ręczne dopisywanie usług)
+2. Caddy
+3. Traefik (wykrywanie kontenerów na podstawie etykiet)
+
+### Decyzja
+Traefik w kontenerze, jedyny punkt wejścia (porty 80 i 443),
+przekierowanie HTTP na HTTPS, certyfikaty z resolvera stepca,
+exposedByDefault: false, wspólna sieć Dockera proxy dla usług
+wystawianych przez Traefika.
+
+### Uzasadnienie
+- Usługa jest wystawiana przez dodanie etykiet w jej pliku Compose,
+  bez zmiany konfiguracji proxy.
+- Wbudowany klient ACME z obsługą wewnętrznego urzędu
+  (LEGO_CA_CERTIFICATES) i krótkich certyfikatów
+  (certificatesDuration).
+- Kontenery nie są wystawiane bez jawnej zgody.
+
+### Konsekwencje
+- Traefik ma dostęp do gniazda Dockera (tylko do odczytu), co daje mu
+  szerokie uprawnienia; pośrednik gniazda (docker socket proxy)
+  wskazano jako kierunek rozwoju.
+- Zmiana konfiguracji statycznej wymaga restartu (handler).
+
+---
+
+## ADR-021: Gitea z izolowaną bazą danych i integracją z AD
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Decyzja
+- Gitea 28.2.0 i PostgreSQL 17.11 w jednym pliku Compose; baza
+  wyłącznie w sieci gitea-internal z internal: true; Gitea w sieciach
+  proxy i gitea-internal.
+- Konfiguracja przez zmienne GITEA__sekcja__KLUCZ, bez kreatora
+  instalacji; rejestracja wyłączona, wymagane logowanie do przeglądania,
+  dostęp wyłącznie przez HTTPS (SSH wyłączone).
+- Uwierzytelnianie przez LDAPS do dc1 kontem svc-ldap-bind (hasło
+  w group_vars/all, wspólne dla kontrolera i hosta usług), z pełną
+  weryfikacją certyfikatu (magazyn zaufania hosta montowany w kontenerze).
+- RBAC: logowanie dla członków grp-gitea-users, uprawnienia
+  administratora dla członków grp-it-admins; konta tworzone przy
+  pierwszym logowaniu, atrybut mail z katalogu.
+
+### Uzasadnienie
+- Segmentacja sieci kontenerów: przejęcie innej usługi nie daje
+  bezpośredniego dostępu do bazy Gitei.
+- Uprawnienia zarządzane wyłącznie w katalogu.
+
+### Konsekwencje
+- Rola tworzy źródło uwierzytelniania, lecz go nie aktualizuje
+  (gitea admin auth update-ldap jako rozszerzenie).
+- Sekrety w zmiennych środowiskowych pliku Compose (tryb 0600).
+
+---
+
+## ADR-022: Przypinanie i weryfikacja wersji obrazów kontenerów
+
+**Status:** przyjęta
+**Data:** 2026-10-24
+
+### Kontekst
+Tagi takie jak latest zmieniają się w czasie, co uniemożliwia
+powtarzalne odtworzenie środowiska. Krytyczne podatności w składnikach
+obrazów (np. PHP2Shell, październik 2026) wymagają kontrolowanej
+aktualizacji.
+
+### Decyzja
+- Każdy obraz przypięty do konkretnej wersji w wartościach domyślnych
+  roli (step-ca 0.30.2, Gitea 28.2.0, PostgreSQL 17.11, Traefik).
+- Przed przypięciem odczyt wersji z obrazu latest i porównanie
+  identyfikatora obrazu (docker image inspect) z identyfikatorem
+  obrazu o tagu wersji.
+- Aktualizacja obrazu przez zmianę wersji w repozytorium i ponowne
+  wykonanie roli.
+
+### Uzasadnienie
+- Powtarzalność wdrożenia i jawna historia zmian wersji w Git.
+- Weryfikacja wykazała nieoczekiwaną zmianę numeracji wersji Gitei,
+  co potwierdza zasadność sprawdzania zamiast zakładania.
+
+### Konsekwencje
+- Brak automatycznego powiadamiania o podatnościach w obrazach;
+  skanowanie obrazów (np. Trivy) jako kierunek rozwoju.
 
 ---
 

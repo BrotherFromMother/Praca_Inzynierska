@@ -1479,3 +1479,272 @@ oraz strefę homelab.internal z adresami usług na svc01.
 - [ ] Zrzuty: maszyna dc1 w Proxmox (opcje: autostart), zadania terraform@pve
 
 ---
+
+# Etap 6: svc01, urząd certyfikacji, Traefik i Gitea
+
+## Listing 5.89. Maszyna svc01 z dyskiem danych
+
+```console
+keinshur@kv235-965:~/…/infra/terraform/platform$ terraform apply tfplan
+module.svc01.proxmox_virtual_environment_vm.this: Creating...
+...
+module.svc01.proxmox_virtual_environment_vm.this: Creation complete after 1m33s [id=101]
+
+Apply complete! Resources: 1 added, 0 changed, 0 destroyed.
+keinshur@kv235-965:~$ ssh homelab 'qm config 101 | grep -E "scsi|memory|cores"'
+cores: 4
+memory: 6144
+scsi0: local-lvm:vm-101-disk-0,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=10G,ssd=0
+scsi1: local-lvm:vm-101-disk-1,aio=io_uring,backup=1,cache=none,discard=on,iothread=1,replicate=1,size=40G,ssd=0
+scsihw: virtio-scsi-single
+```
+
+Komentarz: moduł utworzył drugi dysk (scsi1) wyłącznie dla svc01
+dzięki blokowi dynamic; konfiguracja dc1 nie uległa zmianie.
+
+---
+
+## Listing 5.90. Dane Dockera na osobnym dysku
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 '…'
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sdb         40G  2.3M   38G   1% /var/lib/docker
+/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1 /var/lib/docker ext4 defaults,nofail 0 0
+Katalog Dockera: /var/lib/docker
+...
+Hello from Docker!
+```
+
+Komentarz: dysk danych zamontowany pod stałą nazwą urządzenia,
+z wpisem w /etc/fstab; Docker przechowuje obrazy i wolumeny na dysku
+oddzielonym od systemowego.
+
+---
+
+## Listing 5.91. Weryfikacja tagów wersji obrazów
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 '…'
+docker.io/gitea/gitea:28.2.0
+sha256:30777c91280d973fa02be48b1ade735bd6859e8f6f7af3b4444d519437852504
+sha256:30777c91280d973fa02be48b1ade735bd6859e8f6f7af3b4444d519437852504
+docker.io/library/postgres:17.11-alpine
+sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+sha256:eee6c6e1b0894fa4fe0075eb054af9fd1cf39a35321c2d4110626cfe506411fb
+```
+
+Komentarz: identyczne identyfikatory obrazów dla tagów latest i tagów
+z numerem wersji potwierdzają, że przypinana wersja odpowiada
+sprawdzonemu obrazowi (ADR-022).
+
+---
+
+## Listing 5.92. Urząd certyfikacji step-ca
+
+```console
+TASK [step_ca : Wyświetl odcisk certyfikatu głównego] *************************
+ok: [svc01] =>
+    msg: 'Odcisk certyfikatu głównego (SHA-256): e2992d189062047e664f038e0bbf0459e23ad5f0d041143e75935232f21ed15c'
+keinshur@kv235-965:~/…/infra/ansible$ openssl x509 -in files/pki/root_ca.crt -noout -subject -issuer -dates
+subject=O=Homelab Internal CA, CN=Homelab Internal CA Root CA
+issuer=O=Homelab Internal CA, CN=Homelab Internal CA Root CA
+notBefore=Oct 24 …
+notAfter=Oct 21 … 2036 GMT
+keinshur@kv235-965:~/…/infra/ansible$ curl -s --cacert files/pki/root_ca.crt --resolve ca.homelab.internal:9000:192.168.1.41 https://ca.homelab.internal:9000/health
+{"status":"ok"}
+keinshur@kv235-965:~/…/infra/ansible$ curl -s --cacert files/pki/root_ca.crt --resolve … https://ca.homelab.internal:9000/acme/acme/directory | jq
+{
+  "newNonce": "https://ca.homelab.internal:9000/acme/acme/new-nonce",
+  "newAccount": "https://ca.homelab.internal:9000/acme/acme/new-account",
+  "newOrder": "https://ca.homelab.internal:9000/acme/acme/new-order",
+  "revokeCert": "https://ca.homelab.internal:9000/acme/acme/revoke-cert",
+  "keyChange": "https://ca.homelab.internal:9000/acme/acme/key-change"
+}
+```
+
+Komentarz: samopodpisany certyfikat główny ważny 10 lat; połączenie
+z urzędem weryfikowane pobranym certyfikatem głównym, a katalog ACME
+potwierdza obsługę automatycznego wydawania certyfikatów.
+
+---
+
+## Listing 5.93. Zaufanie do urzędu na serwerach
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'echo -n "dc1: "; curl -sS https://ca.homelab.internal:9000/health; echo'
+dc1: {"status":"ok"}
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'echo -n "svc01: "; curl -sS https://ca.homelab.internal:9000/health; echo'
+svc01: {"status":"ok"}
+```
+
+Komentarz: po rozesłaniu certyfikatu głównego rolą ca_trust obie
+maszyny weryfikują certyfikat urzędu bez dodatkowych opcji, a nazwę
+ca.homelab.internal rozwiązuje kontroler domeny.
+
+---
+
+## Listing 5.94. Automatyczny certyfikat usługi za Traefikiem
+
+```console
+keinshur@kv235-965:~$ curl -sS --resolve whoami.homelab.internal:443:192.168.1.41 https://whoami.homelab.internal | head -5
+Hostname: ed278229dab5
+IP: 127.0.0.1
+IP: ::1
+IP: 172.18.0.3
+RemoteAddr: 172.18.0.4:54864
+keinshur@kv235-965:~$ curl -sSI --resolve whoami.homelab.internal:80:192.168.1.41 http://whoami.homelab.internal | head -3
+HTTP/1.1 308 Permanent Redirect
+Location: https://whoami.homelab.internal/
+keinshur@kv235-965:~$ echo | openssl s_client -connect 192.168.1.41:443 -servername whoami.homelab.internal 2>/dev/null | openssl x509 -noout -subject -issuer -dates
+subject=CN=whoami.homelab.internal
+issuer=O=Homelab Internal CA, CN=Homelab Internal CA Intermediate CA
+notBefore=Oct 24 12:11:15 2026 GMT
+notAfter=Oct 25 12:12:15 2026 GMT
+```
+
+Komentarz: Traefik zamówił certyfikat w step-ca protokołem ACME.
+Certyfikat podpisany przez urząd pośredni jest ważny 24 godziny;
+połączenie HTTP jest przekierowywane na HTTPS, a usługa widzi jako
+klienta adres Traefika.
+
+---
+
+## Listing 5.95. Provisionery urzędu certyfikacji
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'docker exec step-ca step ca provisioner list' | jq -r '.[] | "\(.name) \(.type)"'
+admin JWK
+acme ACME
+infra JWK
+```
+
+Komentarz: provisioner acme obsługuje usługi webowe (certyfikaty
+24-godzinne), a provisioner infra certyfikaty infrastruktury ważne rok.
+
+---
+
+## Listing 5.96. Certyfikat kontrolera domeny z wniosku CSR
+
+```console
+TASK [samba_tls : Wygeneruj klucz prywatny kontrolera domeny] *****************
+changed: [dc1]
+TASK [samba_tls : Utwórz wniosek o certyfikat (CSR)] **************************
+changed: [dc1]
+TASK [samba_tls : Przekaż wniosek do urzędu certyfikacji] *********************
+changed: [dc1 -> svc01(192.168.1.41)]
+TASK [samba_tls : Podpisz wniosek w urzędzie certyfikacji] ********************
+changed: [dc1 -> svc01(192.168.1.41)]
+TASK [samba_tls : Zapisz certyfikat na kontrolerze domeny] ********************
+changed: [dc1]
+...
+RUNNING HANDLER [samba_tls : Uruchom ponownie kontroler domeny] ***************
+changed: [dc1]
+```
+
+Komentarz: klucz prywatny i wniosek powstają na dc1, a podpisanie
+odbywa się na svc01 (delegate_to). Do urzędu trafia wyłącznie wniosek.
+
+---
+
+## Listing 5.97. Weryfikacja certyfikatu LDAPS kontrolera domeny
+
+```console
+keinshur@kv235-965:~$ echo | openssl s_client -connect 192.168.1.40:636 -verify_return_error 2>&1 | grep -E "Verify return code|subject=|issuer="
+subject=CN=dc1.ad.homelab.internal
+issuer=O=Homelab Internal CA, CN=Homelab Internal CA Intermediate CA
+Verify return code: 0 (ok)
+keinshur@kv235-965:~$ echo | openssl s_client -connect 192.168.1.40:636 2>/dev/null | openssl x509 -noout -ext subjectAltName -dates
+X509v3 Subject Alternative Name:
+    DNS:dc1.ad.homelab.internal, DNS:dc1, IP Address:192.168.1.40
+notBefore=Oct 24 12:43:09 2026 GMT
+notAfter=Oct 24 12:44:09 2027 GMT
+keinshur@kv235-965:~$ ldapsearch -H ldaps://192.168.1.40 -x -D "CN=svc-ldap-bind,…" -y /tmp/ldap-bind-pw -b "OU=Homelab,…" "(sAMAccountName=jan.kowalski)" cn | grep -E "^cn:|^result:"
+cn: Jan Kowalski
+result: 0 Success
+```
+
+Komentarz: certyfikat zawiera SAN i jest weryfikowany względem
+certyfikatu głównego step-ca; odczyt LDAPS działa bez wyłączania
+weryfikacji (zamknięcie ograniczenia z etapu 5).
+
+---
+
+## Listing 5.98. Logowanie do Gitei kontami domeny (RBAC)
+
+```console
+keinshur@kv235-965:~$ R="--resolve git.homelab.internal:443:192.168.1.41"
+keinshur@kv235-965:~$ curl -sS $R https://git.homelab.internal/api/healthz | jq .status
+"pass"
+keinshur@kv235-965:~$ curl -sS $R -u "jan.kowalski:…" https://git.homelab.internal/api/v1/user | jq '{login, email, is_admin}'
+{
+  "login": "jan.kowalski",
+  "email": "jan.kowalski@homelab.internal",
+  "is_admin": false
+}
+keinshur@kv235-965:~$ curl -sS $R -u anna.nowak https://git.homelab.internal/api/v1/user | jq '{login, email, is_admin}'
+{
+  "login": "anna.nowak",
+  "email": "anna.nowak@homelab.internal",
+  "is_admin": true
+}
+keinshur@kv235-965:~$ curl -sS $R -u Administrator https://git.homelab.internal/api/v1/user | jq .message
+"invalid username, password or token"
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'docker network inspect gitea_gitea-internal --format "{{range .Containers}}{{.Name}} {{end}}"'
+gitea-db gitea
+```
+
+Komentarz: konta Gitei tworzone są przy pierwszym logowaniu na
+podstawie katalogu; uprawnienia administratora wynikają wyłącznie
+z członkostwa w grp-it-admins, a konta spoza filtra są odrzucane.
+Baza danych jest dostępna wyłącznie w sieci wewnętrznej Gitei.
+
+---
+
+## Listing 5.99. Rozpoznawanie nazw na stacji z dwiema kartami sieciowymi
+
+```console
+PS C:\Users\…> Resolve-DnsName git.homelab.internal
+Resolve-DnsName : git.homelab.internal : Nazwa DNS nie istnieje
+PS C:\Users\…> Resolve-DnsName git.homelab.internal -Server 192.168.1.40
+Name                                           Type   TTL   Section    IPAddress
+----                                           ----   ---   -------    ---------
+git.homelab.internal                           A      900   Answer     192.168.1.41
+PS C:\Users\…> Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object ServerAddresses | Format-Table InterfaceAlias, ServerAddresses
+InterfaceAlias ServerAddresses
+-------------- ---------------
+Ethernet       {192.168.0.92, 192.168.0.99}
+Wi-Fi 2        {192.168.1.40, 192.168.1.1}
+```
+
+Komentarz: stacja podłączona do dwóch sieci odpytuje najpierw DNS karty
+przewodowej, który zwraca odpowiedź „nazwa nie istnieje”. Rozwiązaniem
+jest reguła NRPT kierująca zapytania o homelab.internal do kontrolera
+domeny (rozdzielony DNS).
+
+---
+
+## Listingi kodu etapu 6 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.100 | infra/terraform/modules/vm/main.tf (blok dynamic dysku danych) |
+| 5.101 | infra/terraform/platform/svc01.tf |
+| 5.102 | infra/ansible/roles/data_disk/tasks/main.yml |
+| 5.103 | infra/ansible/roles/step_ca/templates/docker-compose.yml.j2 |
+| 5.104 | infra/ansible/roles/step_ca/tasks/main.yml |
+| 5.105 | infra/ansible/roles/ca_trust/tasks/main.yml i handlers/main.yml |
+| 5.106 | infra/ansible/roles/traefik/templates/traefik.yml.j2 |
+| 5.107 | infra/ansible/roles/traefik/templates/docker-compose.yml.j2 |
+| 5.108 | infra/ansible/roles/samba_tls/tasks/main.yml |
+| 5.109 | infra/ansible/roles/gitea/templates/docker-compose.yml.j2 |
+| 5.110 | infra/ansible/roles/gitea/tasks/main.yml |
+| 5.111 | infra/ansible/inventories/group_vars/all/vars.yml |
+
+## Do uzupełnienia (etap 6)
+
+- [ ] Zrzuty: kłódka i łańcuch certyfikatu w przeglądarce, Gitea po zalogowaniu Jana, panel administracyjny Anny ze źródłem uwierzytelniania homelab-ad
+- [ ] Zrzut: certyfikat główny w certmgr z odciskiem SHA-1
+- [ ] Wersja Traefika i whoami w dzienniku
+
+---
