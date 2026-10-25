@@ -66,3 +66,68 @@
       loop: "{{ zabbix_monitored_hosts }}"
       loop_control:
         label: "{{ item.name }}"
+
+    # --- Grupy użytkowników ---
+    # Kolejność jest istotna: konto awaryjne Admin musi mieć logowanie
+    # wewnętrzne, zanim domyślną metodą stanie się LDAP.
+
+    - name: Wymuś logowanie wewnętrzne dla grupy konta awaryjnego Admin
+      community.zabbix.zabbix_usergroup:
+        name: Zabbix administrators
+        gui_access: internal
+
+    - name: Utwórz grupę administratorów z AD
+      community.zabbix.zabbix_usergroup:
+        name: "{{ zabbix_admins_group }}"
+        gui_access: default
+        hostgroup_rights:
+          - host_group: "{{ zabbix_host_group }}"
+            permission: read-write
+
+    - name: Utwórz grupę użytkowników z podglądem hostów Homelab
+      community.zabbix.zabbix_usergroup:
+        name: "{{ zabbix_viewers_group }}"
+        gui_access: default
+        hostgroup_rights:
+          - host_group: "{{ zabbix_host_group }}"
+            permission: read-only
+
+    # --- Logowanie kontami AD (JIT provisioning) ---
+
+    - name: Skonfiguruj katalog użytkowników Active Directory
+      community.zabbix.zabbix_user_directory:
+        name: "{{ zabbix_ldap_name }}"
+        idp_type: ldap
+        host: ldaps://dc1.ad.homelab.internal
+        port: 636
+        base_dn: "OU=Uzytkownicy,OU=Homelab,{{ zabbix_ldap_base_dn }}"
+        search_attribute: sAMAccountName
+        search_filter: "(&(objectClass=user)(%{attr}=%{user})(memberOf=CN=grp-zabbix-users,OU=Grupy,OU=Homelab,{{ zabbix_ldap_base_dn }}))"
+        bind_dn: "{{ ldap_bind_dn }}"
+        bind_password: "{{ ldap_bind_password }}"
+        provision_status: true
+        group_basedn: "OU=Grupy,OU=Homelab,{{ zabbix_ldap_base_dn }}"
+        group_name: cn
+        group_membership: memberOf
+        user_username: givenName
+        user_lastname: sn
+        provision_groups:
+          - name: grp-it-admins
+            role: Super admin role
+            user_groups:
+              - "{{ zabbix_admins_group }}"
+          - name: grp-zabbix-users
+            role: User role
+            user_groups:
+              - "{{ zabbix_viewers_group }}"
+      no_log: true
+
+    - name: Ustaw LDAP jako domyślne logowanie z tworzeniem kont przy pierwszym logowaniu
+      community.zabbix.zabbix_authentication:
+        authentication_type: ldap
+        ldap_auth_enabled: true
+        ldap_userdirectory: "{{ zabbix_ldap_name }}"
+        ldap_case_sensitive: false
+        ldap_jit_status: true
+        jit_provision_interval: 1h
+        disabled_usrgroup: Disabled

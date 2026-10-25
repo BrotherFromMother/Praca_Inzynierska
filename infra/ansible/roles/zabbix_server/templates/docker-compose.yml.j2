@@ -48,6 +48,8 @@ services:
       POSTGRES_PASSWORD: "{{ zabbix_db_password }}"
       POSTGRES_DB: zabbix
       PHP_TZ: Europe/Warsaw
+    volumes:
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     labels:
       - traefik.enable=true
       - traefik.docker.network={{ zabbix_server_network }}
@@ -68,4 +70,8 @@ networks:
     external: true
   zabbix-internal:
     internal: true
-  zabbix-agents: {}
+  # Stała podsieć: agent na svc01 dopuszcza połączenia z tego zakresu.
+  zabbix-agents:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

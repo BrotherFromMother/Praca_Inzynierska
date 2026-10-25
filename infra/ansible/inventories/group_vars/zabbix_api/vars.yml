@@ -17,3 +17,8 @@ zabbix_monitored_hosts:
   - { name: homelab, ip: 192.168.1.30, templates: ["Linux by Zabbix agent"] }
   - { name: dc1, ip: 192.168.1.40, templates: ["Linux by Zabbix agent"] }
   - { name: svc01, ip: 192.168.1.41, templates: ["Linux by Zabbix agent", "Docker by Zabbix agent 2"] }
+
+zabbix_ldap_name: homelab-ad
+zabbix_ldap_base_dn: DC=ad,DC=homelab,DC=internal
+zabbix_admins_group: Homelab - administratorzy
+zabbix_viewers_group: Homelab - podglad

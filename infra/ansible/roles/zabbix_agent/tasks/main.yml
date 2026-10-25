@@ -12,7 +12,7 @@
     line: "{{ item.key }}={{ item.value }}"
   loop:
     - { key: Server, value: "{{ zabbix_agent_server }}" }
-    - { key: ServerActive, value: "{{ zabbix_agent_server }}" }
+    - { key: ServerActive, value: "{{ zabbix_agent_server_active }}" }
     - { key: Hostname, value: "{{ zabbix_agent_hostname }}" }
   loop_control:
     label: "{{ item.key }}"

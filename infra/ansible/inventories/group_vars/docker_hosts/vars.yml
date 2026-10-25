@@ -7,4 +7,7 @@ bookstack_app_key: "{{ vault_bookstack_app_key }}"
 bookstack_db_password: "{{ vault_bookstack_db_password }}"
 bookstack_db_root_password: "{{ vault_bookstack_db_root_password }}"
 zabbix_db_password: "{{ vault_zabbix_db_password }}"
+
+# Agent Zabbix na hostach z Dockerem
 zabbix_agent_docker: true
+zabbix_agent_server: "192.168.1.41,172.30.0.0/24"
