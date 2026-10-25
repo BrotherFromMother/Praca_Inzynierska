@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Plik zarządzany przez Ansible (rola backup).
+# Kopia zapasowa danych usług do repozytorium restic na Synology.
+set -euo pipefail
+
+MOUNT="{{ backup_mount_point }}"
+export RESTIC_REPOSITORY="{{ backup_repo }}"
+export RESTIC_PASSWORD_FILE="{{ backup_password_file }}"
+STAGING="{{ backup_staging_dir }}"
+STATUS_DIR="{{ backup_status_dir }}"
+HOST="{{ inventory_hostname }}"
+
+log() { echo "[$(date '+%F %T')] $*"; }
+
+T0=$(date +%s)
+
+# Zabezpieczenie: bez zamontowanego udziału kopia trafiłaby na dysk lokalny.
+if ! mountpoint -q "$MOUNT"; then
+  log "BŁĄD: $MOUNT nie jest zamontowany, kopia przerwana"
+  exit 1
+fi
+
+{% if backup_type == 'samba' %}
+log "Spójna kopia katalogu Samby AD"
+rm -rf "$STAGING"
+mkdir -p "$STAGING"
+chmod 700 "$STAGING"
+samba-tool domain backup offline --targetdir="$STAGING"
+restic backup "$STAGING" --tag samba --host "$HOST"
+{% elif backup_type == 'docker' %}
+RC=0
+
+backup_stack() {
+  local name="$1" dir="$2"
+  shift 2
+  local paths=()
+  for v in "$@"; do
+    paths+=("/var/lib/docker/volumes/$v/_data")
+  done
+
+  log "Usługa $name: zatrzymanie"
+  docker compose --project-directory "$dir" stop
+  if restic backup "${paths[@]}" --tag "$name" --host "$HOST"; then
+    log "Usługa $name: kopia wykonana"
+  else
+    log "Usługa $name: BŁĄD kopii"
+    RC=1
+  fi
+  docker compose --project-directory "$dir" start
+  log "Usługa $name: uruchomiona ponownie"
+}
+
+{% for stack in backup_docker_stacks %}
+backup_stack "{{ stack.name }}" "{{ stack.dir }}" {{ stack.volumes | join(' ') }}
+{% endfor %}
+
+if [ "$RC" -ne 0 ]; then
+  log "BŁĄD: co najmniej jedna kopia się nie powiodła"
+  exit 1
+fi
+{% endif %}
+
+log "Retencja: {{ backup_keep_daily }} dziennych, {{ backup_keep_weekly }} tygodniowych"
+restic forget --host "$HOST" --keep-daily {{ backup_keep_daily }} --keep-weekly {{ backup_keep_weekly }} --prune
+
+mkdir -p "$STATUS_DIR"
+date +%s > "$STATUS_DIR/last-success"
+log "Kopia zakończona w $(( $(date +%s) - T0 )) s"

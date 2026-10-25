@@ -1,0 +1,81 @@
+---
+- name: Zainstaluj restic i klienta NFS
+  ansible.builtin.apt:
+    name:
+      - restic
+      - nfs-common
+    state: present
+
+- name: Zamontuj udział kopii zapasowych z Synology
+  ansible.posix.mount:
+    path: "{{ backup_mount_point }}"
+    src: "{{ backup_nfs_server }}:{{ backup_nfs_export }}"
+    fstype: nfs4
+    opts: rw,hard,_netdev,nofail
+    state: mounted
+
+- name: Utwórz katalogi kopii zapasowych
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/restic
+    - "{{ backup_mount_point }}/restic"
+    - "{{ backup_status_dir }}"
+
+- name: Zapisz hasło repozytorium restic
+  ansible.builtin.copy:
+    content: "{{ restic_password }}"
+    dest: "{{ backup_password_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Sprawdź, czy repozytorium restic istnieje
+  ansible.builtin.command:
+    argv: [restic, cat, config]
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repo }}"
+    RESTIC_PASSWORD_FILE: "{{ backup_password_file }}"
+  register: backup_repo_check
+  changed_when: false
+  failed_when: false
+
+- name: Utwórz repozytorium restic
+  ansible.builtin.command:
+    argv: [restic, init]
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repo }}"
+    RESTIC_PASSWORD_FILE: "{{ backup_password_file }}"
+  when: backup_repo_check.rc != 0
+  changed_when: true
+
+- name: Utwórz skrypt kopii zapasowej
+  ansible.builtin.template:
+    src: homelab-backup.sh.j2
+    dest: /usr/local/sbin/homelab-backup.sh
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Utwórz usługę i timer systemd
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - homelab-backup.service
+    - homelab-backup.timer
+
+- name: Włącz codzienny timer kopii zapasowej
+  ansible.builtin.systemd_service:
+    name: homelab-backup.timer
+    state: started
+    enabled: true
+    daemon_reload: true

@@ -31,3 +31,6 @@ samba_dc_service_records:
   - { name: wiki, ip: 192.168.1.41 }
   - { name: zabbix, ip: 192.168.1.41 }
   - { name: whoami, ip: 192.168.1.41 }
+
+# Kopie zapasowe
+backup_type: samba

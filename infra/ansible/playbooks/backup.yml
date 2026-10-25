@@ -1,0 +1,7 @@
+---
+- name: Kopie zapasowe danych usług
+  hosts: backup_clients
+  become: true
+
+  roles:
+    - backup

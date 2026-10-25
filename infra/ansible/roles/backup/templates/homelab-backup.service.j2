@@ -1,0 +1,12 @@
+# Plik zarządzany przez Ansible (rola backup).
+[Unit]
+Description=Kopia zapasowa danych usług (restic)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor={{ backup_mount_point }}
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-backup.sh
+Nice=10
+IOSchedulingClass=idle

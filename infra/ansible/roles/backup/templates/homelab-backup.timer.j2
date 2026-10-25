@@ -1,0 +1,11 @@
+# Plik zarządzany przez Ansible (rola backup).
+[Unit]
+Description=Codzienna kopia zapasowa danych usług
+
+[Timer]
+OnCalendar={{ backup_schedule }}
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

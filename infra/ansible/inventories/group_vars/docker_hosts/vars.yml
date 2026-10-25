@@ -11,3 +11,11 @@ zabbix_db_password: "{{ vault_zabbix_db_password }}"
 # Agent Zabbix na hostach z Dockerem
 zabbix_agent_docker: true
 zabbix_agent_server: "192.168.1.41,172.30.0.0/24"
+
+# Kopie zapasowe: usługi kopiowane na zimno (zatrzymanie, kopia wolumenów, start)
+backup_type: docker
+backup_docker_stacks:
+  - { name: step-ca, dir: /opt/stack/step-ca, volumes: [step-ca_step-ca-data] }
+  - { name: gitea, dir: /opt/stack/gitea, volumes: [gitea_gitea-data, gitea_gitea-db] }
+  - { name: bookstack, dir: /opt/stack/bookstack, volumes: [bookstack_bookstack-config, bookstack_bookstack-db] }
+  - { name: zabbix, dir: /opt/stack/zabbix, volumes: [zabbix_zabbix-db] }
