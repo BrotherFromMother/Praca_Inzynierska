@@ -34,6 +34,7 @@ konsekwencje.
 | ADR-024 | Monitoring Zabbix 7.0 LTS                 | przyjęta | 2026-10-25 |
 | ADR-025 | Przypinanie obrazów przez skrót           | przyjęta | 2026-10-25 |
 | ADR-026 | Zabbix: konfiguracja przez API, LDAP      | przyjęta | 2026-10-25 |
+| ADR-027 | Strategia kopii zapasowych danych usług   | przyjęta | 2026-10-25 |
 
 ---
 
@@ -1096,6 +1097,63 @@ przypięciem weryfikacja wersji PHP pod kątem PHP2Shell.
 - Moduł zabbix_user_directory zgłasza zmianę przy każdym uruchomieniu,
   ponieważ API nie zwraca hasła konta usługowego (pole tylko do zapisu).
 - Ostrzeżenie o przestarzałym imporcie w kodzie kolekcji (zewnętrzne).
+
+---
+
+## ADR-027: Strategia kopii zapasowych danych usług
+
+**Status:** przyjęta
+**Data:** 2026-10-25
+
+### Kontekst
+Infrastruktura jako kod odtwarza maszyny i konfigurację, lecz nie dane
+wytworzone przez użytkowników (konta i grupy w AD, repozytoria,
+dokumentacja, historia monitoringu, klucze urzędu certyfikacji).
+Istniejące kopie maszyn (vzdump, etap 1) są spójne jedynie jak po
+nagłym wyłączeniu (agent gościa wyłączony), niezaszyfrowane
+i niepodzielne.
+
+### Rozważane opcje
+1. Wyłącznie kopie maszyn w Proxmox VE (vzdump)
+2. Zrzuty baz danych (pg_dump, mariadb-dump) importowane przy
+   odtwarzaniu
+3. Kopie wolumenów na zimno i kopia katalogu narzędziem Samby,
+   przechowywane w repozytorium restic
+
+### Decyzja
+Wybrano **opcję 3** jako uzupełnienie opcji 1 (obrona warstwowa):
+- dc1: samba-tool domain backup offline;
+- svc01: dla każdej usługi zatrzymanie, kopia jej wolumenów, ponowne
+  uruchomienie (osobna kopia z tagiem usługi); bez wolumenu Traefika
+  (certyfikaty odtwarzalne);
+- restic: szyfrowanie AES-256, deduplikacja, kompresja, retencja
+  7 dziennych i 4 tygodniowych kopii, weryfikacja restic check;
+- repozytoria na Synology w udziale homelab-backup (NFS 4,
+  dostęp wyłącznie dla 192.168.1.40 i 192.168.1.41, tylko root);
+- harmonogram: timer systemd codziennie o 1:30 (przed vzdump o 2:00),
+  Persistent=true, losowe opóźnienie do 5 minut;
+- zabezpieczenia: kontrola montowania w skrypcie i RequiresMountsFor
+  w usłudze; ponowne uruchomienie usługi także po nieudanej kopii.
+
+### Uzasadnienie
+- Kopia na zimno jest spójna bez narzędzi specyficznych dla bazy,
+  a odtworzenie sprowadza się do przywrócenia plików przed startem
+  usługi.
+- Kopie per usługa pozwalają przywrócić jedną usługę bez wpływu na
+  pozostałe.
+- Szyfrowanie chroni klucze urzędu i skróty haseł z AD w razie
+  kradzieży NAS-a.
+
+### Konsekwencje
+- Krótka przerwa w działaniu każdej usługi podczas kopii
+  (zmierzona: 1–16 s), zdominowana przez restart kontenerów.
+- Utrata hasła repozytorium restic uniemożliwia odtworzenie; hasło
+  przechowywane w sejfie Ansible i w menedżerze haseł, zalecana kopia
+  poza infrastrukturą.
+- Brak kopii poza siedzibą (reguła 3-2-1 niespełniona); Hyper Backup
+  do chmury lub nośnika zewnętrznego jako kierunek rozwoju.
+- Monitorowanie świeżości kopii (plik last-success) w Zabbixie jako
+  rozszerzenie.
 
 ---
 

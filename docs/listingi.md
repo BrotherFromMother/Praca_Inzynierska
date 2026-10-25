@@ -2050,3 +2050,134 @@ alarmom przy chwilowych przerwach.
 - [ ] Zrzuty: pulpit Global view z problemem dc1, problem ze statusem RESOLVED, lista hostów widziana przez Jana (3 hosty) i Annę (4 hosty), dane kontenerów svc01
 
 ---
+
+# Etap 9: Kopie zapasowe i odtwarzanie
+
+## Listing 5.134. Udział NFS na kopie zapasowe
+
+```console
+ansible@svc01:~$ sudo showmount -e 192.168.1.80
+Export list for 192.168.1.80:
+/volume1/homelab-backup 192.168.1.41,192.168.1.40
+/volume1/pve-backup     192.168.1.30
+/volume1/pve-vm         192.168.1.30
+ansible@svc01:~$ sudo mount -t nfs4 192.168.1.80:/volume1/homelab-backup /mnt/test-backup && \
+mountpoint /mnt/test-backup && \
+sudo touch /mnt/test-backup/test && ls -l /mnt/test-backup/ && …
+/mnt/test-backup is a mountpoint
+ls: cannot open directory '/mnt/test-backup/': Permission denied
+```
+
+Komentarz: udział jest eksportowany wyłącznie dla dc1 i svc01, zapis
+jest możliwy dla roota, a zwykły użytkownik nie może odczytać
+zawartości. Wcześniejsza próba bez kontroli montowania zapisała plik
+testowy na dysk lokalny, co uzasadniło kontrolę mountpoint w skrypcie
+kopii.
+
+---
+
+## Listing 5.135. Kopia katalogu Samby AD
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'sudo systemctl start homelab-backup.service; sudo journalctl -u homelab-backup.service --no-pager -n 25'
+dc1 homelab-backup.sh[7987]: Backup succeeded.
+dc1 homelab-backup.sh[8010]: Added to the repository: 1.674 MiB (1.659 MiB stored)
+dc1 homelab-backup.sh[8010]: snapshot 604a5fe9 saved
+dc1 homelab-backup.sh[7980]: [2026-10-25 17:46:57] Retencja: 7 dziennych, 4 tygodniowych
+dc1 homelab-backup.sh[7980]: [2026-10-25 17:46:57] Kopia zakończona w 4 s
+```
+
+Komentarz: spójna kopia całego katalogu domeny zajmuje 1,7 MB i trwa
+4 s.
+
+---
+
+## Listing 5.136. Kopia usług na zimno
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'sudo journalctl -u homelab-backup.service --since today --no-pager | grep "Usługa"'
+[2026-10-25 17:47:17] Usługa step-ca: zatrzymanie
+[2026-10-25 17:47:18] Usługa step-ca: kopia wykonana
+[2026-10-25 17:47:18] Usługa step-ca: uruchomiona ponownie
+[2026-10-25 17:47:18] Usługa gitea: zatrzymanie
+[2026-10-25 17:47:20] Usługa gitea: kopia wykonana
+[2026-10-25 17:47:31] Usługa gitea: uruchomiona ponownie
+[2026-10-25 17:47:31] Usługa bookstack: zatrzymanie
+[2026-10-25 17:47:36] Usługa bookstack: kopia wykonana
+[2026-10-25 17:47:47] Usługa bookstack: uruchomiona ponownie
+[2026-10-25 17:47:47] Usługa zabbix: zatrzymanie
+[2026-10-25 17:47:51] Usługa zabbix: kopia wykonana
+[2026-10-25 17:48:02] Usługa zabbix: uruchomiona ponownie
+… Kopia zakończona w 45 s
+```
+
+Komentarz: przerwa w działaniu usług wyniosła 1–16 s, z czego kopia
+trwała 1–5 s, a reszta to zatrzymanie i start kontenerów.
+
+---
+
+## Listing 5.137. Kopie w repozytoriach i weryfikacja
+
+```console
+keinshur@kv235-965:~$ ansible backup_clients -b -m ansible.builtin.shell -a "…; restic snapshots; restic stats --mode raw-data | tail -3; restic check 2>&1 | tail -2"
+dc1 | CHANGED | rc=0 >>
+604a5fe9  2026-10-25 17:46:56  dc1         samba       /var/backups/homelab  1.672 MiB
+       Compression Ratio:  1.01x
+no errors were found
+svc01 | CHANGED | rc=0 >>
+6806f8b9  2026-10-25 17:47:17  svc01       step-ca     /var/lib/docker/volumes/step-ca_step-ca-data/_data        114.684 KiB
+de5e62fe  2026-10-25 17:47:18  svc01       gitea       /var/lib/docker/volumes/gitea_gitea-data/_data            69.596 MiB
+0cf0d69e  2026-10-25 17:47:35  svc01       bookstack   /var/lib/docker/volumes/bookstack_bookstack-config/_data  153.483 MiB
+4f7333a1  2026-10-25 17:47:48  svc01       zabbix      /var/lib/docker/volumes/zabbix_zabbix-db/_data            193.302 MiB
+4 snapshots
+       Compression Ratio:  5.38x
+Compression Space Saving:  81.43%
+no errors were found
+```
+
+Komentarz: każda usługa ma osobną kopię z własnym tagiem. Pliki baz
+danych kompresują się ponad pięciokrotnie; archiwum Samby jest już
+skompresowane. Weryfikacja nie wykazała błędów repozytoriów.
+
+---
+
+## Listing 5.138. Odtworzenie pojedynczej usługi
+
+```console
+root@svc01:~# restic snapshots --tag bookstack
+0cf0d69e  2026-10-25 17:47:35  svc01       bookstack   …  153.483 MiB
+68194cd2  2026-10-25 17:59:13  svc01       bookstack   …  153.755 MiB
+root@svc01:~# docker compose --project-directory /opt/stack/bookstack stop
+root@svc01:~# for v in …; do mv …/_data …/_data.przed-odtworzeniem; done
+root@svc01:~# restic restore latest --tag bookstack --host svc01 --target /
+restoring snapshot 68194cd2 of […] at 2026-10-25 17:59:13 … to /
+Summary: Restored 544 files/dirs (153.755 MiB) in 0:00
+root@svc01:~# docker compose --project-directory /opt/stack/bookstack start
+ ✔ Container bookstack-db Healthy                                                10.6s
+ ✔ Container bookstack    Started                                                 0.2s
+Odtworzenie trwało 16 s
+```
+
+Komentarz: po trwałym usunięciu książki (łącznie z koszem) usługa
+została odtworzona z kopii w 16 s, a usunięte dane wróciły. Pozostałe
+usługi działały bez przerwy; dotychczasowe dane odłożono na wypadek
+konieczności wycofania.
+
+---
+
+## Listingi kodu etapu 9 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.139 | infra/ansible/roles/backup/templates/homelab-backup.sh.j2 |
+| 5.140 | infra/ansible/roles/backup/templates/homelab-backup.service.j2 i .timer.j2 |
+| 5.141 | infra/ansible/roles/backup/tasks/main.yml |
+| 5.142 | infra/ansible/inventories/group_vars/docker_hosts/vars.yml (backup_docker_stacks) |
+| 5.143 | docs/runbook-odtwarzanie.md (procedura odtwarzania) |
+
+## Do uzupełnienia (etap 9)
+
+- [ ] Zrzuty: uprawnienia NFS folderu homelab-backup w DSM, BookStack przed i po odtworzeniu
+- [ ] Rozmiar przyrostowej kopii po nocnym uruchomieniu (deduplikacja)
+
+---
