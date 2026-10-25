@@ -7,5 +7,5 @@ traefik_acme_email: admin@homelab.internal
 traefik_acme_ca_server: https://step-ca:9000/acme/acme/directory
 traefik_cert_duration_hours: 24
 traefik_root_ca_path: /usr/local/share/ca-certificates/homelab-root-ca.crt
-traefik_whoami_enabled: true
+traefik_whoami_enabled: false
 traefik_whoami_host: whoami.homelab.internal
