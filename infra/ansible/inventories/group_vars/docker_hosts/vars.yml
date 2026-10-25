@@ -8,3 +8,4 @@ bookstack_db_password: "{{ vault_bookstack_db_password }}"
 bookstack_db_root_password: "{{ vault_bookstack_db_root_password }}"
 zabbix_db_password: "{{ vault_zabbix_db_password }}"
 zabbix_admin_password: "{{ vault_zabbix_admin_password }}"
+zabbix_agent_docker: true

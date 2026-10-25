@@ -1,0 +1,33 @@
+---
+- name: Zainstaluj agenta Zabbix 2
+  ansible.builtin.apt:
+    name: zabbix-agent2
+    state: present
+    update_cache: true
+
+- name: Skonfiguruj agenta Zabbix
+  ansible.builtin.lineinfile:
+    path: "{{ zabbix_agent_config }}"
+    regexp: "^#?\\s*{{ item.key }}="
+    line: "{{ item.key }}={{ item.value }}"
+  loop:
+    - { key: Server, value: "{{ zabbix_agent_server }}" }
+    - { key: ServerActive, value: "{{ zabbix_agent_server }}" }
+    - { key: Hostname, value: "{{ zabbix_agent_hostname }}" }
+  loop_control:
+    label: "{{ item.key }}"
+  notify: Uruchom ponownie agenta Zabbix
+
+- name: Dodaj agenta do grupy docker (monitorowanie kontenerów)
+  ansible.builtin.user:
+    name: zabbix
+    groups: docker
+    append: true
+  when: zabbix_agent_docker
+  notify: Uruchom ponownie agenta Zabbix
+
+- name: Uruchom agenta Zabbix i włącz go przy starcie systemu
+  ansible.builtin.systemd_service:
+    name: zabbix-agent2
+    state: started
+    enabled: true

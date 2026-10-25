@@ -1,0 +1,7 @@
+---
+- name: Agenty Zabbix na monitorowanych maszynach
+  hosts: monitored
+  become: true
+
+  roles:
+    - zabbix_agent
