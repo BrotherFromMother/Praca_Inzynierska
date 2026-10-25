@@ -31,6 +31,9 @@ konsekwencje.
 | ADR-021 | Gitea z izolowaną bazą i integracją z AD  | przyjęta | 2026-10-24 |
 | ADR-022 | Przypinanie i weryfikacja wersji obrazów  | przyjęta | 2026-10-24 |
 | ADR-023 | BookStack: obraz LinuxServer.io i role   | przyjęta | 2026-10-24 |
+| ADR-024 | Monitoring Zabbix 7.0 LTS                 | przyjęta | 2026-10-25 |
+| ADR-025 | Przypinanie obrazów przez skrót           | przyjęta | 2026-10-25 |
+| ADR-026 | Zabbix: konfiguracja przez API, LDAP      | przyjęta | 2026-10-25 |
 
 ---
 
@@ -986,6 +989,113 @@ opublikowano krytyczne podatności silnika PHP (PHP2Shell).
 - Zależność od dostawcy obrazu spoza projektu BookStack.
 - Domyślne konto aplikacji wymagało ręcznego usunięcia; automatyzacja
   tego kroku jako rozszerzenie.
+
+---
+
+## ADR-024: Monitoring Zabbix 7.0 LTS
+
+**Status:** przyjęta
+**Data:** 2026-10-25
+
+### Kontekst
+Środowisko wymaga monitoringu maszyn, usług i kontenerów z wykrywaniem
+awarii. Najnowsza wersja Zabbixa (7.4.16) jest wydaniem standardowym,
+a gałąź 8.0 LTS nie została jeszcze wydana. Repozytorium Debiana 13
+zawiera agenta Zabbix 2 w wersji 7.0.22.
+
+### Decyzja
+- Zabbix 7.0.32 LTS (serwer, interfejs Nginx/PHP-FPM, PostgreSQL 17.11)
+  w kontenerach na svc01, interfejs za Traefikiem pod
+  zabbix.homelab.internal.
+- Agent Zabbix 2 z repozytorium Debiana na dc1, svc01 i hypervisorze,
+  instalowany rolą zabbix_agent dla grupy monitored.
+- Trzy sieci: zabbix-internal (internal: true, baza), proxy (interfejs),
+  zabbix-agents ze stałą podsiecią 172.30.0.0/24 (łączność serwera
+  z agentami w sieci LAN).
+- Agent na svc01 w grupie docker (szablon Docker by Zabbix agent 2).
+
+### Uzasadnienie
+- Wydanie LTS zapewnia wieloletnie wsparcie i poprawki bezpieczeństwa.
+- Agent z repozytorium dystrybucji należy do tej samej gałęzi co serwer,
+  bez dodatkowego repozytorium na każdej maszynie.
+- Połączenia z kontenera do agenta na tym samym hoście nie są
+  maskowane adresem hosta; stała podsieć pozwala jawnie dopuścić ją
+  w konfiguracji agenta.
+
+### Konsekwencje
+- Monitoring działa na tym samym sprzęcie co usługi i nie wykryje
+  awarii całego hypervisora; przeniesienie na Raspberry Pi 5 jako
+  kierunek rozwoju.
+- Członkostwo agenta w grupie docker daje mu uprawnienia równoważne
+  rootowi na svc01 (pośrednik gniazda Dockera jako rozszerzenie).
+- Poza zakresem: powiadomienia (typy mediów i akcje), Grafana,
+  monitorowanie Proxmox VE przez API.
+
+---
+
+## ADR-025: Przypinanie obrazów kontenerów przez skrót
+
+**Status:** przyjęta (uzupełnienie ADR-022)
+**Data:** 2026-10-25
+
+### Kontekst
+Obrazy Zabbixa o tagach alpine-7.0-latest i alpine-7.0.32 zawierały tę
+samą wersję aplikacji i PHP 8.5.12, lecz miały różne identyfikatory:
+były to dwie kompilacje z tego samego dnia. Tag jest nazwą, którą
+wydawca może przenieść na inny obraz.
+
+### Decyzja
+Obrazy Zabbixa przypięte jednocześnie tagiem (czytelność) i skrótem
+manifestu (niezmienność), np.
+zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32@sha256:a54ce2e1…; przed
+przypięciem weryfikacja wersji PHP pod kątem PHP2Shell.
+
+### Uzasadnienie
+- Skrót jednoznacznie identyfikuje sprawdzony obraz; ponowne
+  odtworzenie środowiska pobierze dokładnie ten sam obraz.
+- Niezgodny skrót powoduje błąd pobrania zamiast cichej zmiany.
+
+### Konsekwencje
+- Aktualizacja wymaga zmiany skrótu w repozytorium.
+- Pozostałe usługi przypięte tagiem; ujednolicenie przez skróty jako
+  rozszerzenie.
+
+---
+
+## ADR-026: Konfiguracja Zabbixa przez API i logowanie kontami AD
+
+**Status:** przyjęta
+**Data:** 2026-10-25
+
+### Decyzja
+- Konfiguracja Zabbixa jako kod: kolekcja community.zabbix
+  (połączenie httpapi, host zabbix-api w inwentarzu,
+  ansible_zabbix_url_path: "") oraz bezpośrednie wywołania JSON-RPC
+  modułem uri.
+- Zmiana domyślnego hasła konta Admin przez API, idempotentna:
+  wykonywana tylko, gdy logowanie hasłem domyślnym się powiedzie.
+- Rejestracja hostów z szablonami Linux by Zabbix agent i Docker by
+  Zabbix agent 2; wyłączenie domyślnego hosta Zabbix server.
+- Katalog użytkowników LDAPS (dc1, svc-ldap-bind), JIT provisioning,
+  LDAP jako domyślna metoda uwierzytelniania.
+- Mapowanie grup: grp-it-admins → Super admin role, grupa
+  „Homelab - administratorzy”; grp-zabbix-users → User role, grupa
+  „Homelab - podglad” z prawem odczytu grupy hostów Homelab.
+- Konto awaryjne Admin w grupie Zabbix administrators z wymuszonym
+  logowaniem wewnętrznym; kolejność zadań gwarantuje ustawienie
+  wyjątku przed przełączeniem domyślnej metody na LDAP.
+
+### Uzasadnienie
+- Pełna odtwarzalność konfiguracji monitoringu z repozytorium.
+- JIT provisioning wymaga LDAP jako metody domyślnej; konto awaryjne
+  zapewnia dostęp przy niedostępności kontrolera domeny.
+- Rozdzielenie roli (zakres czynności) i grupy użytkowników (zakres
+  hostów) realizuje RBAC na dwóch poziomach.
+
+### Konsekwencje
+- Moduł zabbix_user_directory zgłasza zmianę przy każdym uruchomieniu,
+  ponieważ API nie zwraca hasła konta usługowego (pole tylko do zapisu).
+- Ostrzeżenie o przestarzałym imporcie w kodzie kolekcji (zewnętrzne).
 
 ---
 

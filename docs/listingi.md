@@ -1841,3 +1841,212 @@ sieciowych stacji (rozdzielony DNS), rozwiązując problem z listingu 5.99.
 - [ ] Zrzuty: lista użytkowników BookStacka z rolami, profil Jana (Editor), kłódka na wiki.homelab.internal
 
 ---
+
+# Etap 8: Monitoring Zabbix
+
+## Listing 5.119. Rozpoznanie wersji Zabbixa i agenta
+
+```console
+ansible@svc01:~$ docker run --rm --entrypoint zabbix_server zabbix/zabbix-server-pgsql:alpine-latest -V | head -1
+zabbix_server (Zabbix) 7.4.16
+ansible@svc01:~$ docker pull zabbix/zabbix-server-pgsql:alpine-8.0-latest
+Error response from daemon: … alpine-8.0-latest: not found
+ansible@svc01:~$ docker run --rm --entrypoint zabbix_server zabbix/zabbix-server-pgsql:alpine-7.0-latest -V 2>/dev/null | head -1
+zabbix_server (Zabbix) 7.0.32
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'apt-cache policy zabbix-agent2 | head -3'
+zabbix-agent2:
+  Installed: (none)
+  Candidate: 1:7.0.22+dfsg-1~deb13u1
+```
+
+Komentarz: najnowsza wersja (7.4) jest wydaniem standardowym, a gałąź
+8.0 LTS nie jest jeszcze dostępna. Wybrano Zabbix 7.0 LTS, zgodny
+z agentem z repozytorium Debiana (ADR-024).
+
+---
+
+## Listing 5.120. Tag a skrót obrazu
+
+```console
+ansible@svc01:~$ docker image inspect -f '{{.Id}}' zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32
+sha256:fb5b690e182ad728f4b8e56ca078114c153db1f8435010377d6a9babfe3df613
+sha256:a54ce2e19aaf0a61609e4bbc7ec01c16bef504e6e1c51e3854120ac76d2dbaeb
+ansible@svc01:~$ docker image inspect -f '{{.Created}}' zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32
+2026-10-22T06:31:06.884029269Z
+2026-10-22T10:20:56.037204244Z
+ansible@svc01:~$ docker run --rm --entrypoint sh zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32 -c '…'
+/usr/sbin/php-fpm85: PHP 8.5.12 (fpm-fcgi) (built: Oct 21 2026 16:29:26) (NTS)
+```
+
+Komentarz: dwa tagi tej samej wersji wskazywały różne kompilacje
+z tego samego dnia; obie zawierają PHP z poprawką PHP2Shell. Obrazy
+przypięto skrótem manifestu, jednoznacznie identyfikującym sprawdzony
+obraz (ADR-025).
+
+---
+
+## Listing 5.121. Automatyczny certyfikat nowej usługi
+
+```console
+keinshur@kv235-965:~$ echo | openssl s_client -connect 192.168.1.41:443 -servername zabbix.homelab.internal 2>/dev/null | openssl x509 -noout -subject
+subject=CN=TRAEFIK DEFAULT CERT
+…(wdrożenie roli zabbix_server)…
+keinshur@kv235-965:~$ echo | openssl s_client -connect 192.168.1.41:443 -servername zabbix.homelab.internal 2>/dev/null | openssl x509 -noout -subject -issuer
+subject=CN=zabbix.homelab.internal
+issuer=O=Homelab Internal CA, CN=Homelab Internal CA Intermediate CA
+```
+
+Komentarz: przed wdrożeniem Traefik nie znał usługi i przedstawiał
+certyfikat domyślny; po uruchomieniu kontenera z etykietami Traefik
+automatycznie zamówił certyfikat w step-ca.
+
+---
+
+## Listing 5.122. Usługa Zabbix na svc01
+
+```console
+keinshur@kv235-965:~$ curl -sS -o /dev/null -w "Interfejs Zabbixa: %{http_code}\n" https://zabbix.homelab.internal/
+Interfejs Zabbixa: 200
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'docker ps --filter name=zabbix --format "table {{.Names}}\t{{.Status}}"'
+NAMES           STATUS
+zabbix-web      Up 59 seconds (healthy)
+zabbix-server   Up 59 seconds
+zabbix-db       Up About a minute (healthy)
+```
+
+Komentarz: wdrożenie roli trwało 55 s; ponowne wykonanie nie wprowadza
+zmian.
+
+---
+
+## Listing 5.123. Agenty na monitorowanych maszynach
+
+```console
+keinshur@kv235-965:~$ ansible monitored -b -m ansible.builtin.shell -a "systemctl is-active zabbix-agent2; grep -E '^(Server|ServerActive|Hostname)=' /etc/zabbix/zabbix_agent2.conf"
+homelab | CHANGED | rc=0 >>
+active
+Server=192.168.1.41
+ServerActive=192.168.1.41
+Hostname=homelab
+dc1 | CHANGED | rc=0 >>
+active
+…
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'for h in …; do docker exec zabbix-server sh -c "nc -z -w 2 $h 10050 …"; done'
+192.168.1.30: port 10050 otwarty
+192.168.1.40: port 10050 otwarty
+192.168.1.41: port 10050 otwarty
+```
+
+Komentarz: rola zabbix_agent konfiguruje agenty na wszystkich hostach
+grupy monitored (hypervisor, kontroler domeny, host usług).
+
+---
+
+## Listing 5.124. Odrzucanie połączeń z kontenera na tym samym hoście
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.41 'sudo grep -i "rejected" /var/log/zabbix/zabbix_agent2.log | tail -3'
+2026/10/25 11:11:23.261976 connection from "172.21.0.2" rejected, allowed hosts: "192.168.1.41"
+2026/10/25 11:12:23.260973 connection from "172.21.0.2" rejected, allowed hosts: "192.168.1.41"
+2026/10/25 11:13:23.261025 connection from "172.21.0.2" rejected, allowed hosts: "192.168.1.41"
+```
+
+Komentarz: połączenia z kontenera serwera do agenta na tym samym hoście
+nie są maskowane adresem 192.168.1.41. Rozwiązaniem jest stała podsieć
+sieci zabbix-agents (172.30.0.0/24) dopuszczona w konfiguracji agenta
+na svc01. Test samego otwarcia portu (listing 5.123) nie wykrył tego
+problemu.
+
+---
+
+## Listing 5.125. Idempotentna zmiana domyślnego hasła przez API
+
+```console
+TASK [Sprawdź, czy konto Admin ma jeszcze domyślne hasło] **********************
+ok: [zabbix-api -> localhost]
+TASK [Zmień domyślne hasło konta Admin] ****************************************
+skipping: [zabbix-api]
+TASK [Utwórz grupę hostów] *****************************************************
+ok: [zabbix-api]
+TASK [Zarejestruj monitorowane maszyny] ****************************************
+ok: [zabbix-api] => (item=homelab)
+ok: [zabbix-api] => (item=dc1)
+ok: [zabbix-api] => (item=svc01)
+```
+
+Komentarz: hasło zostało zmienione w pierwszym przebiegu; w kolejnych
+logowanie hasłem domyślnym kończy się niepowodzeniem, więc zmiana jest
+pomijana. Hosty rejestrowane są modułem idempotentnym.
+
+---
+
+## Listing 5.126. Test katalogu użytkowników w interfejsie Zabbixa
+
+```console
+Test authentication
+Login successful
+User role: User role
+User groups: Homelab - podglad
+```
+
+Komentarz: wbudowany test potwierdził połączenie LDAPS, konto usługowe,
+filtr i mapowanie grup. Logowanie mimo to nie działało, ponieważ
+tworzenie kont przy pierwszym logowaniu wymaga LDAP jako domyślnej
+metody uwierzytelniania (ADR-026).
+
+---
+
+## Listing 5.127. Idempotentność konfiguracji monitoringu
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/svc.yml | tail -3
+svc01                      : ok=45   changed=0    unreachable=0    failed=0    skipped=4 …
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/monitoring.yml | tail -5
+dc1                        : ok=4    changed=0 …
+homelab                    : ok=4    changed=0 …
+svc01                      : ok=5    changed=0 …
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/zabbix-config.yml | grep -E "changed:|PLAY RECAP" -A1
+changed: [zabbix-api]
+--
+zabbix-api                 : ok=8    changed=1 …
+```
+
+Komentarz: jedyną zgłaszaną zmianą jest katalog użytkowników, ponieważ
+hasło konta usługowego jest w API polem tylko do zapisu.
+
+---
+
+## Listing 5.128. Wykrycie awarii agenta
+
+```console
+keinshur@kv235-965:~$ ssh … ansible@192.168.1.40 'sudo systemctl stop zabbix-agent2'
+…
+Current problems (Global view):
+Time         Host  Problem • Severity                                   Duration
+02:58:30 PM  dc1   Linux: Zabbix agent is not available (for 3m)  Average  25s
+Host availability: 2 Available, 1 Not available
+```
+
+Komentarz: problem pojawił się po ok. 3 minutach od zatrzymania agenta,
+zgodnie z progiem wyzwalacza. Ikona dostępności zmienia kolor szybciej,
+lecz problem powstaje dopiero po przekroczeniu progu, co zapobiega
+alarmom przy chwilowych przerwach.
+
+---
+
+## Listingi kodu etapu 8 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.129 | infra/ansible/roles/zabbix_server/templates/docker-compose.yml.j2 |
+| 5.130 | infra/ansible/roles/zabbix_agent/tasks/main.yml |
+| 5.131 | infra/ansible/playbooks/zabbix-config.yml |
+| 5.132 | infra/ansible/inventories/group_vars/zabbix_api/vars.yml |
+| 5.133 | infra/ansible/inventories/hosts.yml (grupy monitored i zabbix_api) |
+
+## Do uzupełnienia (etap 8)
+
+- [ ] Czas potwierdzenia naprawy (Recovery time) w teście awarii agenta
+- [ ] Zrzuty: pulpit Global view z problemem dc1, problem ze statusem RESOLVED, lista hostów widziana przez Jana (3 hosty) i Annę (4 hosty), dane kontenerów svc01
+
+---
