@@ -131,3 +131,10 @@
         ldap_jit_status: true
         jit_provision_interval: 1h
         disabled_usrgroup: Disabled
+
+    - name: Wyłącz domyślny host Zabbix server (w kontenerze serwera nie ma agenta)
+      community.zabbix.zabbix_host:
+        host_name: Zabbix server
+        host_groups:
+          - Zabbix servers
+        status: disabled
