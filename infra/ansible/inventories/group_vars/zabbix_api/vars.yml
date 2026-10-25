@@ -1,0 +1,19 @@
+---
+# Połączenie z API Zabbixa (kolekcja community.zabbix).
+ansible_network_os: community.zabbix.zabbix
+ansible_connection: httpapi
+ansible_httpapi_port: 443
+ansible_httpapi_use_ssl: true
+ansible_httpapi_validate_certs: true
+ansible_zabbix_url_path: ""
+ansible_user: Admin
+ansible_httpapi_pass: "{{ zabbix_admin_password }}"
+
+zabbix_admin_password: "{{ vault_zabbix_admin_password }}"
+zabbix_api_url: "https://{{ ansible_host }}/api_jsonrpc.php"
+
+zabbix_host_group: Homelab
+zabbix_monitored_hosts:
+  - { name: homelab, ip: 192.168.1.30, templates: ["Linux by Zabbix agent"] }
+  - { name: dc1, ip: 192.168.1.40, templates: ["Linux by Zabbix agent"] }
+  - { name: svc01, ip: 192.168.1.41, templates: ["Linux by Zabbix agent", "Docker by Zabbix agent 2"] }

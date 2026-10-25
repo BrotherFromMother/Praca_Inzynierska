@@ -1,0 +1,68 @@
+---
+- name: Konfiguracja Zabbixa przez API
+  hosts: zabbix_api
+  gather_facts: false
+
+  tasks:
+    # --- Domyślne hasło konta Admin (bezpośrednio przez API JSON-RPC) ---
+
+    - name: Sprawdź, czy konto Admin ma jeszcze domyślne hasło
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        body_format: json
+        body:
+          jsonrpc: "2.0"
+          method: user.login
+          params:
+            username: Admin
+            password: zabbix
+          id: 1
+      delegate_to: localhost
+      register: zabbix_default_login
+      no_log: true
+
+    - name: Zmień domyślne hasło konta Admin
+      ansible.builtin.uri:
+        url: "{{ zabbix_api_url }}"
+        method: POST
+        body_format: json
+        headers:
+          Authorization: "Bearer {{ zabbix_default_login.json.result }}"
+        body:
+          jsonrpc: "2.0"
+          method: user.update
+          params:
+            userid: "1"
+            current_passwd: zabbix
+            passwd: "{{ zabbix_admin_password }}"
+          id: 2
+      delegate_to: localhost
+      when: zabbix_default_login.json.result is defined
+      changed_when: true
+      no_log: true
+
+    # --- Monitorowane maszyny (kolekcja community.zabbix) ---
+
+    - name: Utwórz grupę hostów
+      community.zabbix.zabbix_group:
+        host_groups:
+          - "{{ zabbix_host_group }}"
+
+    - name: Zarejestruj monitorowane maszyny
+      community.zabbix.zabbix_host:
+        host_name: "{{ item.name }}"
+        host_groups:
+          - "{{ zabbix_host_group }}"
+        link_templates: "{{ item.templates }}"
+        status: enabled
+        interfaces:
+          - type: agent
+            main: 1
+            useip: 1
+            ip: "{{ item.ip }}"
+            dns: ""
+            port: "10050"
+      loop: "{{ zabbix_monitored_hosts }}"
+      loop_control:
+        label: "{{ item.name }}"
