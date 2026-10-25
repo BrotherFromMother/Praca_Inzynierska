@@ -12,3 +12,4 @@
     - traefik
     - gitea
     - bookstack
+    - zabbix_server

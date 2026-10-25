@@ -1,0 +1,71 @@
+# Plik zarządzany przez Ansible (rola zabbix_server). Zawiera sekrety: tryb 0600.
+services:
+  zabbix-db:
+    image: {{ zabbix_server_db_image }}
+    container_name: zabbix-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: "{{ zabbix_db_password }}"
+      POSTGRES_DB: zabbix
+    volumes:
+      - zabbix-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zabbix -d zabbix"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - zabbix-internal
+
+  zabbix-server:
+    image: {{ zabbix_server_image }}
+    container_name: zabbix-server
+    restart: unless-stopped
+    environment:
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: "{{ zabbix_db_password }}"
+      POSTGRES_DB: zabbix
+    ports:
+      - "10051:10051"
+    networks:
+      - zabbix-internal
+      - zabbix-agents
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+
+  zabbix-web:
+    image: {{ zabbix_server_web_image }}
+    container_name: zabbix-web
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: "{{ zabbix_server_name }}"
+      DB_SERVER_HOST: zabbix-db
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: "{{ zabbix_db_password }}"
+      POSTGRES_DB: zabbix
+      PHP_TZ: Europe/Warsaw
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network={{ zabbix_server_network }}
+      - traefik.http.routers.zabbix.rule=Host(`{{ zabbix_server_domain }}`)
+      - traefik.http.routers.zabbix.entrypoints=websecure
+      - traefik.http.services.zabbix.loadbalancer.server.port=8080
+    networks:
+      - {{ zabbix_server_network }}
+      - zabbix-internal
+    depends_on:
+      - zabbix-server
+
+volumes:
+  zabbix-db:
+
+networks:
+  {{ zabbix_server_network }}:
+    external: true
+  zabbix-internal:
+    internal: true
+  zabbix-agents: {}

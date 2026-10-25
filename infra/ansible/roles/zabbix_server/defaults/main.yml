@@ -1,0 +1,8 @@
+---
+zabbix_server_image: zabbix/zabbix-server-pgsql:alpine-7.0.32@sha256:401dc90cff398aaf6a0fa72625f4b9b57407e61231f94e13e7f4e68aeff0c42c
+zabbix_server_web_image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32@sha256:a54ce2e19aaf0a61609e4bbc7ec01c16bef504e6e1c51e3854120ac76d2dbaeb
+zabbix_server_db_image: postgres:17.11-alpine
+zabbix_server_stack_dir: /opt/stack/zabbix
+zabbix_server_domain: zabbix.homelab.internal
+zabbix_server_network: proxy
+zabbix_server_name: Homelab
