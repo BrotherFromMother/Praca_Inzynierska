@@ -1,0 +1,22 @@
+---
+# Pełne wdrożenie środowiska. Kolejność wynika z zależności między usługami:
+# DNS z dc1 jest potrzebny step-ca na svc01, a urząd na svc01 wydaje
+# certyfikat LDAPS dla dc1 (cykl zależności rozwiązany drugim przebiegiem).
+
+- name: Kontroler domeny (domena, DNS, katalog)
+  ansible.builtin.import_playbook: dc.yml
+
+- name: Host usług (urząd certyfikacji, Traefik, usługi)
+  ansible.builtin.import_playbook: svc.yml
+
+- name: Certyfikat LDAPS kontrolera domeny
+  ansible.builtin.import_playbook: dc-tls.yml
+
+- name: Agenty monitoringu
+  ansible.builtin.import_playbook: monitoring.yml
+
+- name: Konfiguracja Zabbixa przez API
+  ansible.builtin.import_playbook: zabbix-config.yml
+
+- name: Kopie zapasowe
+  ansible.builtin.import_playbook: backup.yml
