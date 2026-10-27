@@ -8,6 +8,7 @@
     - data_disk
     - docker
     - backup
+    - backup_restore
     - step_ca
     - ca_trust
     - traefik

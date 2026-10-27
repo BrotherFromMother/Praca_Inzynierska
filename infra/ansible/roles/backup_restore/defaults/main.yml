@@ -1,0 +1,4 @@
+---
+backup_restore_enabled: true
+backup_restore_cache_dir: /var/cache/restic
+backup_restore_check_script: 'for v in "$@"; do docker volume inspect "$v" >/dev/null 2>&1 && exit 0; done; exit 1'

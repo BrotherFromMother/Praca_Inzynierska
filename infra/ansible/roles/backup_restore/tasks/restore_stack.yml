@@ -1,0 +1,67 @@
+---
+# Przywracanie jednej usługi. Wykonywane w pętli z main.yml.
+
+- name: "Sprawdź, czy istnieją wolumeny usługi {{ backup_restore_stack.name }}"
+  ansible.builtin.command:
+    argv: "{{ ['sh', '-c', backup_restore_check_script, 'sh'] + backup_restore_stack.volumes }}"
+  register: backup_restore_volumes
+  changed_when: false
+  failed_when: false
+
+- name: "Sprawdź, czy istnieje kopia usługi {{ backup_restore_stack.name }}"
+  ansible.builtin.command:
+    argv:
+      - restic
+      - snapshots
+      - --tag
+      - "{{ backup_restore_stack.name }}"
+      - --host
+      - "{{ inventory_hostname }}"
+      - --latest
+      - "1"
+      - --json
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repo }}"
+    RESTIC_PASSWORD_FILE: "{{ backup_password_file }}"
+    RESTIC_CACHE_DIR: "{{ backup_restore_cache_dir }}"
+  register: backup_restore_snapshots
+  changed_when: false
+  when: backup_restore_volumes.rc != 0
+
+- name: "Ustal, czy przywrócić usługę {{ backup_restore_stack.name }}"
+  ansible.builtin.set_fact:
+    backup_restore_needed: >-
+      {{ backup_restore_volumes.rc != 0
+         and (backup_restore_snapshots.stdout | default('[]') | from_json | length > 0) }}
+
+- name: "Utwórz z etykietami Compose wolumeny usługi {{ backup_restore_stack.name }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - volume
+      - create
+      - "--label=com.docker.compose.project={{ backup_restore_stack.dir | basename }}"
+      - "--label=com.docker.compose.volume={{ item | regex_replace('^' ~ (backup_restore_stack.dir | basename) ~ '_', '') }}"
+      - "{{ item }}"
+  loop: "{{ backup_restore_stack.volumes }}"
+  when: backup_restore_needed | bool
+  changed_when: true
+
+- name: "Przywróć z najnowszej kopii dane usługi {{ backup_restore_stack.name }}"
+  ansible.builtin.command:
+    argv:
+      - restic
+      - restore
+      - latest
+      - --tag
+      - "{{ backup_restore_stack.name }}"
+      - --host
+      - "{{ inventory_hostname }}"
+      - --target
+      - /
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repo }}"
+    RESTIC_PASSWORD_FILE: "{{ backup_password_file }}"
+    RESTIC_CACHE_DIR: "{{ backup_restore_cache_dir }}"
+  when: backup_restore_needed | bool
+  changed_when: true

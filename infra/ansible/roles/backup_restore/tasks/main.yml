@@ -1,0 +1,8 @@
+---
+- name: Przywróć dane usług z kopii, jeśli ich wolumenów nie ma
+  ansible.builtin.include_tasks: restore_stack.yml
+  loop: "{{ backup_docker_stacks }}"
+  loop_control:
+    loop_var: backup_restore_stack
+    label: "{{ backup_restore_stack.name }}"
+  when: backup_restore_enabled
