@@ -1,0 +1,15 @@
+---
+# Rotacja klucza SSH automatyzacji (ADR-014).
+# 1. Dodanie nowego klucza:  -e key_file=~/.ssh/portal_automation_ed25519.nowy.pub
+# 2. Usunięcie pozostałych:  -e key_file=~/.ssh/portal_automation_ed25519.pub -e exclusive=true
+- name: Rotacja klucza SSH automatyzacji
+  hosts: domain_controllers:docker_hosts
+  become: true
+
+  tasks:
+    - name: Ustaw klucz automatyzacji dla konta ansible
+      ansible.posix.authorized_key:
+        user: ansible
+        key: "{{ lookup('ansible.builtin.file', key_file) }}"
+        state: present
+        exclusive: "{{ exclusive | default(false) | bool }}"
