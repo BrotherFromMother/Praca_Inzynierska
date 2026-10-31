@@ -80,4 +80,9 @@ resource "proxmox_virtual_environment_vm" "this" {
       keys     = [var.ssh_public_key]
     }
   }
+  # Klucze SSH po utworzeniu maszyny zarządzane są przez Ansible (rotacja kluczy),
+  # więc zmiana klucza w cloud-init nie może wymuszać zmian istniejących maszyn.
+  lifecycle {
+    ignore_changes = [initialization[0].user_account]
+  }
 }
