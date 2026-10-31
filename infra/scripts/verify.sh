@@ -30,7 +30,7 @@ zabbix_ok()   { curl -sf -H "Content-Type: application/json-rpc" \
 containers_ok() {
   local expected="step-ca traefik gitea gitea-db bookstack bookstack-db zabbix-db zabbix-server zabbix-web"
   local running
-  running=$(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "ansible@$SVC01" \
+    running=$(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "ansible@$SVC01" \
     'docker ps --filter status=running --format "{{.Names}}"')
   for c in $expected; do
     echo "$running" | grep -qx "$c" || return 1
