@@ -12,3 +12,17 @@
     group: root
     mode: "0644"
   notify: Przebuduj magazyn zaufanych certyfikatów
+
+- name: Sprawdź, czy certyfikat jest w magazynie systemowym
+  ansible.builtin.stat:
+    path: /etc/ssl/certs/homelab-root-ca.pem
+  register: ca_trust_in_store
+
+- name: Przebuduj magazyn, jeśli brakuje w nim certyfikatu
+  ansible.builtin.command:
+    argv: [update-ca-certificates]
+  when: not ca_trust_in_store.stat.exists
+  changed_when: true
+
+- name: Przebuduj magazyn zaufanych certyfikatów od razu, przed kolejnymi rolami
+  ansible.builtin.meta: flush_handlers

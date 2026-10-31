@@ -28,10 +28,13 @@ zabbix_ok()   { curl -sf -H "Content-Type: application/json-rpc" \
                   -d '{"jsonrpc":"2.0","method":"apiinfo.version","params":{},"id":1}' \
                   https://zabbix.homelab.internal/api_jsonrpc.php | grep -q '"result"'; }
 containers_ok() {
-  local bad
-  bad=$(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "ansible@$SVC01" \
-    'docker ps -a --format "{{.Names}} {{.Status}}"' | grep -vE " Up " | wc -l)
-  [ "$bad" -eq 0 ]
+  local expected="step-ca traefik gitea gitea-db bookstack bookstack-db zabbix-db zabbix-server zabbix-web"
+  local running
+  running=$(ssh -i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 "ansible@$SVC01" \
+    'docker ps --filter status=running --format "{{.Names}}"')
+  for c in $expected; do
+    echo "$running" | grep -qx "$c" || return 1
+  done
 }
 
 run_all() {
