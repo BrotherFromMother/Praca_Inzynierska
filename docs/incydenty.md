@@ -148,8 +148,8 @@ Harmonogram kopii niedopasowany do godzin pracy sprzętu; brak
 monitorowania wykonania i świeżości kopii.
 
 ### Działania
-- Harmonogram vzdump dopasowany do godzin pracy serwera.
-- Monitorowanie świeżości kopii w Zabbixie (plik last-success).
+- Zadanie vzdump: opcja repeat-missed (nadrabianie pominiętych uruchomień po starcie serwera), wykonane 2026-10-31.
+- Monitorowanie świeżości kopii w Zabbixie: kierunek rozwoju (zamrożenie zakresu).
 
 ### Wniosek
 Kopie, których wykonania nikt nie monitoruje, mogą nie istnieć
