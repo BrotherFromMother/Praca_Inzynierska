@@ -2181,3 +2181,268 @@ konieczności wycofania.
 - [ ] Rozmiar przyrostowej kopii po nocnym uruchomieniu (deduplikacja)
 
 ---
+
+# Etap 10: Wdrożenie jednym poleceniem
+
+## Listing 5.144. Zbieżność site.yml
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ time ansible-playbook playbooks/site.yml
+…
+dc1                        : ok=48   changed=1 …
+homelab                    : ok=4    changed=0 …
+svc01                      : ok=67   changed=0 …
+zabbix-api                 : ok=9    changed=2 …
+real    1m34.778s
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/site.yml | grep -E "^TASK|^changed" | grep -B1 "^changed"
+TASK [Skonfiguruj katalog użytkowników Active Directory] ***********************
+changed: [zabbix-api]
+```
+
+Komentarz: pierwsze uruchomienie wprowadziło zmiany zewnętrzne
+(aktualizacje), drugie zgłasza wyłącznie zmianę pola hasła tylko do
+zapisu (zbieżność a idempotentność).
+
+---
+
+## Listing 5.145. Uszkodzenie bazy po nadpisaniu plików (INC-01)
+
+```console
+ansible@svc01:~$ docker logs zabbix-db --tail 15 2>&1
+… LOG:  database system was shut down at 2026-10-27 18:00:42 UTC
+… LOG:  unexpected pageaddr 0/1C000000 in WAL segment 000000010000000000000021, LSN 0/21000000, offset 0
+… LOG:  invalid checkpoint record
+… PANIC:  could not locate a valid checkpoint record at 0/214058F8
+… LOG:  startup process (PID 29) was terminated by signal 6: Aborted
+```
+
+Komentarz: pliki z kopii nadpisane pod działającą bazą; plik sterujący
+wskazywał punkt kontrolny nieobecny w podmienionym dzienniku WAL.
+
+---
+
+## Listing 5.146. Kopie a przebieg incydentu INC-01
+
+```console
+root@svc01:~# restic snapshots
+…
+c4222d8f  2026-10-27 18:42:56  svc01  step-ca    …
+a89a0e2a  2026-10-27 18:42:58  svc01  gitea      …
+a4fd010a  2026-10-27 18:43:13  svc01  bookstack  …
+5c0f3be4  2026-10-27 18:43:27  svc01  zabbix     …
+78167b92  2026-10-27 19:00:11  svc01  step-ca    …
+…
+root@svc01:~# uptime -s
+2026-10-27 18:41:21
+```
+
+Komentarz: brak kopii nocnych z 26 i 27.10 (serwer wyłączony); kopia
+z 18:42 to nadrobienie przez Persistent=true i ostatni dobry stan
+sprzed testu; kopie z 19:00 zawierają stan uszkodzony.
+
+---
+
+## Listing 5.147. Czyste przywrócenie usług po identyfikatorach kopii
+
+```console
+root@svc01:~# odtworz /opt/stack/zabbix 5c0f3be4 zabbix_zabbix-db
+restoring snapshot 5c0f3be4 of [/var/lib/docker/volumes/zabbix_zabbix-db/_data] at 2026-10-27 18:43:27 … to /
+Summary: Restored 2318 files/dirs (197.545 MiB) in 0:01
+ ✔ Container zabbix-db     Healthy                                             10.7s
+root@svc01:~# docker logs zabbix-db --tail 3 2>&1
+… LOG:  database system was shut down at 2026-10-27 17:43:26 UTC
+… LOG:  database system is ready to accept connections
+```
+
+Komentarz: dane bieżące odłożono jako _data.uszkodzone; po przywróceniu
+kopii na zimno baza uruchomiła się poprawnie.
+
+---
+
+## Listing 5.148. Weryfikacja zgodności całego środowiska
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ./infra/scripts/deploy.sh
+==> [19:42:13] Etap 1/3: infrastruktura (Terraform)
+==> [19:42:14] Terraform images: brak zmian
+==> [19:42:15] Terraform platform: brak zmian
+==> [19:42:15] Etap 2/3: dostępność maszyn
+==> [19:42:17] Etap 3/3: konfiguracja i usługi (Ansible)
+    msg: 'Odcisk certyfikatu głównego (SHA-256): e2992d189062047e664f038e0bbf0459e23ad5f0d041143e75935232f21ed15c'
+dc1                        : ok=48   changed=0 …
+homelab                    : ok=4    changed=0 …
+svc01                      : ok=79   changed=0 …
+zabbix-api                 : ok=9    changed=1 …
+==> [19:43:42] Wdrożenie zakończone
+    Terraform:     2 s
+    Maszyny:       2 s
+    Ansible:       85 s
+    Razem:         89 s
+```
+
+Komentarz: jedno polecenie potwierdza zgodność środowiska z kodem
+w 89 s; odcisk certyfikatu głównego niezmieniony po INC-01.
+
+---
+
+# Etap 11: Testy i pomiary
+
+## Listing 5.149. Testy akceptacyjne
+
+```console
+keinshur@kv235-965:~/projekty/Praca_Inzynierska$ ./infra/scripts/verify.sh
+=== 10:09:38
+  [ OK ] DNS: git.homelab.internal przez dc1
+  [ OK ] LDAPS dc1: certyfikat zweryfikowany
+  [ OK ] Urząd certyfikacji step-ca
+  [ OK ] Gitea (HTTPS, healthz)
+  [ OK ] BookStack (HTTPS, strona logowania)
+  [ OK ] Zabbix (HTTPS, API)
+  [ OK ] Kontenery na svc01: wszystkie działają
+Wszystkie testy przeszły
+```
+
+---
+
+## Listing 5.150. Rotacja klucza automatyzacji (INC-02)
+
+```console
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/rotate-automation-key.yml -e key_file=~/.ssh/portal_automation_ed25519.nowy.pub
+dc1                        : ok=2    changed=1 …
+svc01                      : ok=2    changed=1 …
+dc1: nowy klucz działa
+svc01: nowy klucz działa
+keinshur@kv235-965:~/…/infra/ansible$ ansible-playbook playbooks/rotate-automation-key.yml -e key_file=~/.ssh/portal_automation_ed25519.pub -e exclusive=true
+…
+ansible@192.168.1.41: Permission denied (publickey).
+svc01: stary klucz odrzucony, poprawnie
+ansible@192.168.1.40: Permission denied (publickey).
+dc1: stary klucz odrzucony, poprawnie
+```
+
+Komentarz: rotacja bez utraty dostępu: dodanie, test, usunięcie
+pozostałych kluczy, test odrzucenia starego.
+
+---
+
+## Listing 5.151. Odbudowa svc01, próba 1: ukryta zależność (INC-03)
+
+```console
+==> [10:29:23] Maszyna svc01 utworzona od nowa: usunięcie starego klucza SSH
+TASK [backup_restore : Przywróć z najnowszej kopii dane usługi step-ca] ********
+…
+    msg: 'Odcisk certyfikatu głównego (SHA-256): e2992d189062047e664f038e0bbf0459e23ad5f0d041143e75935232f21ed15c'
+    msg: 'Status code was -1 and not [200]: Request failed: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+        certificate verify failed: unable to get local issuer certificate (_ssl.c:1029)>'
+    url: https://git.homelab.internal/api/healthz
+svc01                      : ok=67   changed=37   unreachable=0    failed=1 …
+real    12m6.894s
+```
+
+Komentarz: magazyn certyfikatów nowej maszyny nie był przebudowany
+przed sprawdzeniem Gitei (handler na końcu playbooka).
+
+---
+
+## Listing 5.152. Odbudowa svc01, scenariusz A (próba 2)
+
+```console
+Kopia restic … Kopia zakończona w 46 s     (11:15:24)
+AWARIA: 11:18:47
+  Logical volume "vm-101-disk-0" successfully removed.
+  Logical volume "vm-101-disk-1" successfully removed.
+==> [11:18:53] Terraform platform: zmiany do wprowadzenia:
+==> [11:19:03] Maszyna svc01 utworzona od nowa: usunięcie starego klucza SSH
+==> [11:19:16] Etap 3/3: konfiguracja i usługi (Ansible)
+    msg: 'Odcisk certyfikatu głównego (SHA-256): e2992d189062047e664f038e0bbf0459e23ad5f0d041143e75935232f21ed15c'
+dc1                        : ok=50   changed=0 …
+svc01                      : ok=97   changed=50   unreachable=0    failed=0 …
+==> [11:30:04] Wdrożenie zakończone
+    Terraform:     13 s
+    Maszyny:       13 s
+    Ansible:       648 s
+    Razem:         674 s
+  [ OK ] … (7 testów)
+Środowisko sprawne po 1 s oczekiwania
+SPRAWNE: 11:30:05
+```
+
+Komentarz: odbudowa maszyny ze wszystkimi usługami i danymi jednym
+poleceniem, bez ingerencji: RTO 11 min 18 s, RPO 3 min 23 s.
+
+---
+
+## Listing 5.153. Kopia vzdump svc01
+
+```console
+keinshur@kv235-965:~$ ssh homelab 'vzdump 101 --storage nas-backup --mode snapshot --compress zstd 2>&1 | tail -6'
+INFO: transferred 50.00 GiB in 45 seconds (1.1 GiB/s)
+INFO: archive file size: 2.09GB
+INFO: Finished Backup of VM 101 (00:00:49)
+keinshur@kv235-965:~$ ssh homelab 'pvesm list nas-backup | grep -E "vzdump-qemu-10[01]"'
+nas-backup:backup/vzdump-qemu-101-2026_10_31-10_24_57.vma.zst vma.zst backup    2245661441 101
+```
+
+Komentarz: jedyna kopia vzdump maszyn dc1 i svc01 w magazynie to kopia
+ręczna (INC-04).
+
+---
+
+## Listing 5.154. Przywrócenie svc01 z kopii vzdump (scenariusz B)
+
+```console
+AWARIA B: 11:34:52
+restore vma archive: zstd -q -d -c -- /mnt/pve/nas-backup/dump/vzdump-qemu-101-2026_10_31-10_24_57.vma.zst | vma extract …
+progress 100% (read 53687091200 bytes, duration 22 sec)
+total bytes read 53687091200, sparse bytes 47728332800 (88.9%)
+generating cloud-init ISO
+Przywrócono maszynę: 11:35:24
+=== 11:35:59
+  [ OK ] DNS: git.homelab.internal przez dc1
+  [ OK ] LDAPS dc1: certyfikat zweryfikowany
+  [ OK ] Urząd certyfikacji step-ca
+  [ OK ] Gitea (HTTPS, healthz)
+  [ OK ] BookStack (HTTPS, strona logowania)
+  [ OK ] Zabbix (HTTPS, API)
+```
+
+Komentarz: usługi sprawne po ok. 67 s; bazy uruchomiły się z kopii
+spójnej jak po nagłym wyłączeniu. Test kontenerów wymagał poprawki
+skryptu (akceptacja klucza nowego serwera); kontenery działały od
+startu maszyny.
+
+---
+
+## Listing 5.155. Zgodność z kodem po przywróceniu z vzdump
+
+```console
+==> [12:33:55] Terraform images: brak zmian
+==> [12:33:57] Terraform platform: brak zmian
+dc1                        : ok=50   changed=0 …
+homelab                    : ok=4    changed=0 …
+svc01                      : ok=80   changed=0 …
+zabbix-api                 : ok=9    changed=1 …
+    Razem:         102 s
+Wszystkie testy przeszły
+```
+
+---
+
+## Listingi kodu etapów 10 i 11 (z repozytorium)
+
+| Listing | Plik |
+|---|---|
+| 5.156 | infra/ansible/playbooks/site.yml |
+| 5.157 | infra/ansible/roles/backup_restore/tasks/restore_stack.yml |
+| 5.158 | infra/scripts/deploy.sh |
+| 5.159 | infra/scripts/verify.sh |
+| 5.160 | infra/ansible/roles/ca_trust/tasks/main.yml |
+| 5.161 | infra/ansible/playbooks/rotate-automation-key.yml |
+| 5.162 | infra/terraform/modules/vm/main.tf (blok lifecycle) |
+
+## Do uzupełnienia (etapy 10 i 11)
+
+- [ ] Zrzuty: BookStack ze znacznikiem A po scenariuszu B, Zabbix po odbudowie
+- [ ] Wykres czasu odbudowy (fazy scenariusza A) do rozdziału z testami
+
+---

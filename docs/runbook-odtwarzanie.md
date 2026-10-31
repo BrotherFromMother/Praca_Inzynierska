@@ -1,21 +1,29 @@
-# Procedura odtwarzania danych usług
+# Procedura odtwarzania
 
-Dokument dla administratora. Opisuje odtworzenie danych z kopii restic
-na Synology (udział homelab-backup). Konfiguracja usług odtwarzana jest
-z repozytorium Git (Terraform, Ansible); niniejsza procedura dotyczy
-danych.
+Dokument dla administratora. Konfiguracja odtwarzana jest z repozytorium
+Git (Terraform, Ansible), dane z kopii restic na Synology (udział
+homelab-backup) lub kopii vzdump (magazyn nas-backup).
+
+| Sekcja | Zakres | Stan weryfikacji |
+|---|---|---|
+| 2 | jedna usługa na svc01 | przetestowana (2026-10-25, 2026-10-27) |
+| 3 | katalog Samby AD na dc1 | **nieprzetestowana** |
+| 4 | cały svc01 z kodu i restic | przetestowana (2026-10-31, RTO 11 min 18 s) |
+| 5 | cały svc01 z vzdump | przetestowana (2026-10-31, RTO ok. 1 min 7 s) |
+| 6 | stacja robocza administratora | sekrety zweryfikowane odtworzeniem (2026-10-31) |
+| 7 | weryfikacja po odtworzeniu | infra/scripts/verify.sh |
 
 ## 1. Informacje wstępne
 
 | Element | Wartość |
 |---|---|
 | Repozytoria restic | /mnt/homelab-backup/restic/<host> (dc1, svc01) |
-| Plik z hasłem | /etc/restic/password (źródło: sejf Ansible, group_vars/all) |
+| Plik z hasłem | /etc/restic/password (źródło: sejf Ansible, menedżer haseł) |
 | Kopie svc01 | osobne dla usług: tagi step-ca, gitea, bookstack, zabbix |
 | Kopie dc1 | archiwum samba-tool, tag samba |
-| Harmonogram | codziennie ok. 1:30; retencja 7 dziennych, 4 tygodniowe |
+| Kopie maszyn | vzdump w magazynie nas-backup |
 
-Przed odtworzeniem na danym hoście (jako root):
+Przed pracą z restic na danym hoście (jako root):
 
 ```bash
 export RESTIC_REPOSITORY=/mnt/homelab-backup/restic/$(hostname)
@@ -25,10 +33,12 @@ mountpoint /mnt/homelab-backup     # musi być punktem montowania
 restic snapshots                   # lista dostępnych kopii
 ```
 
-## 2. Odtworzenie jednej usługi na svc01
+**Przed odtwarzaniem wstrzymać kopie automatyczne**, aby nie zapisały
+stanu uszkodzonego jako najnowszego:
+`systemctl disable --now homelab-backup.timer`
+(rola backup włączy je ponownie przy najbliższym wdrożeniu).
 
-Dotyczy: step-ca, gitea, bookstack, zabbix. Pozostałe usługi działają
-bez przerwy.
+## 2. Odtworzenie jednej usługi na svc01
 
 | Usługa | Katalog projektu | Wolumeny |
 |---|---|---|
@@ -37,37 +47,33 @@ bez przerwy.
 | bookstack | /opt/stack/bookstack | bookstack_bookstack-config, bookstack_bookstack-db |
 | zabbix | /opt/stack/zabbix | zabbix_zabbix-db |
 
-Przykład dla BookStacka (najnowsza kopia):
-
 ```bash
-USLUGA=bookstack
-KATALOG=/opt/stack/bookstack
-WOLUMENY="bookstack_bookstack-config bookstack_bookstack-db"
+odtworz() {
+  local katalog="$1" kopia="$2"
+  shift 2
+  docker compose --project-directory "$katalog" stop
+  for v in "$@"; do
+    rm -rf /var/lib/docker/volumes/$v/_data.przed-odtworzeniem
+    mv /var/lib/docker/volumes/$v/_data /var/lib/docker/volumes/$v/_data.przed-odtworzeniem
+  done
+  restic restore "$kopia" --target /
+  docker compose --project-directory "$katalog" start
+}
 
-docker compose --project-directory "$KATALOG" stop
-for v in $WOLUMENY; do
-  mv /var/lib/docker/volumes/$v/_data /var/lib/docker/volumes/$v/_data.przed-odtworzeniem
-done
-restic restore latest --tag "$USLUGA" --host svc01 --target /
-docker compose --project-directory "$KATALOG" start
+odtworz /opt/stack/bookstack <id-kopii> bookstack_bookstack-config bookstack_bookstack-db
 ```
 
-Odtworzenie kopii innej niż najnowsza: zamiast `latest` podać
-identyfikator z `restic snapshots --tag "$USLUGA"`.
+Identyfikator kopii z `restic snapshots --tag <usługa>`. **Jeśli
+najnowsza kopia mogła powstać po uszkodzeniu danych, wskazać
+identyfikator ostatniej dobrej kopii zamiast latest** (INC-01).
 
-Weryfikacja: usługa odpowiada przez https i zawiera oczekiwane dane.
-Po potwierdzeniu usunąć katalogi `_data.przed-odtworzeniem`.
+Weryfikacja: verify.sh i sprawdzenie danych w usłudze; następnie
+usunięcie katalogów `_data.przed-odtworzeniem`.
 
-Wycofanie (gdy odtworzenie się nie powiodło): zatrzymać usługę,
-usunąć odtworzone `_data`, przywrócić nazwy katalogów
-`_data.przed-odtworzeniem` na `_data`, uruchomić usługę.
+Wycofanie: zatrzymać usługę, usunąć odtworzone `_data`, przywrócić
+nazwy `_data.przed-odtworzeniem` na `_data`, uruchomić usługę.
 
-**Uwaga (step-ca):** odtworzenie innego niż bieżący stanu urzędu nie
-zmienia certyfikatu głównego, o ile kopia pochodzi z tego samego
-urzędu. Utrata wolumenu step-ca bez kopii wymusza wymianę certyfikatu
-głównego na wszystkich klientach.
-
-## 3. Odtworzenie katalogu Samby AD na dc1
+## 3. Odtworzenie katalogu Samby AD na dc1 (niezweryfikowane)
 
 ```bash
 systemctl stop samba-ad-dc
@@ -80,31 +86,71 @@ samba-tool domain backup restore --backup-file="$ARCHIWUM" \
 ```
 
 Następnie wskazać katalogi odtworzonej bazy zgodnie z komunikatem
-narzędzia (smb.conf z katalogu restore) i uruchomić samba-ad-dc.
-Weryfikacja: rekordy SRV w DNS, kinit administratora, lista
-użytkowników.
+narzędzia i uruchomić samba-ad-dc. Weryfikacja: rekordy SRV w DNS,
+kinit administratora, lista użytkowników, verify.sh.
 
-**Uwaga:** przy więcej niż jednym kontrolerze domeny przywrócenie bazy
-z kopii grozi uszkodzeniem replikacji (USN rollback); procedura dotyczy
-środowiska z jednym kontrolerem.
+Przy więcej niż jednym kontrolerze domeny przywrócenie bazy z kopii
+grozi uszkodzeniem replikacji (USN rollback).
 
-## 4. Odtworzenie całego svc01 (awaria maszyny)
+## 4. Odtworzenie całego svc01 z kodu i kopii usług (scenariusz A)
 
-1. Terraform: utworzenie maszyny svc01 (konfiguracja platform).
-2. Ansible: playbooks/svc.yml do roli docker włącznie
-   (base, data_disk, docker) oraz playbooks/backup.yml (montowanie
-   NFS, restic).
-3. Utworzenie wolumenów i odtworzenie danych wszystkich usług
-   (sekcja 2, bez kroku zatrzymania), w tym w pierwszej kolejności
-   step-ca.
-4. Ansible: pełny playbooks/svc.yml (role usług znajdą istniejące
-   dane), playbooks/monitoring.yml, playbooks/zabbix-config.yml.
-5. Weryfikacja wszystkich usług; pomiar RTO i RPO.
+Na stacji administratora:
 
-Procedura podlega testowi awarii w etapie 11.
+```bash
+cd ~/projekty/Praca_Inzynierska
+./infra/scripts/deploy.sh
+./infra/scripts/verify.sh --wait 600
+```
 
-## 5. Alternatywa: kopia maszyny w Proxmox VE
+deploy.sh tworzy brakującą maszynę (Terraform), usuwa jej stary klucz
+z known_hosts, czeka na cloud-init i wykonuje site.yml. Rola
+backup_restore przywraca dane usług przed ich uruchomieniem (wolumeny
+nie istnieją, kopie są). Odcisk certyfikatu głównego w wyniku musi być
+niezmieniony.
 
-Kopie vzdump (codziennie 2:00, magazyn nas-backup) pozwalają
-przywrócić całą maszynę z poziomu Proxmox VE (Backup → Restore).
-Przywraca to wszystkie usługi maszyny do stanu z chwili kopii.
+Wymagany dostęp do internetu (repozytoria Debiana, Docker Hub).
+Zmierzony RTO: 11 min 18 s.
+
+## 5. Przywrócenie svc01 z kopii vzdump (scenariusz B)
+
+```bash
+ssh homelab 'qm stop 101; qm destroy 101'      # jeśli maszyna istnieje
+ssh homelab 'pvesm list nas-backup | grep vzdump-qemu-101'
+ssh homelab 'qmrestore nas-backup:backup/<archiwum>.vma.zst 101 --storage local-lvm && qm start 101'
+ssh-keygen -R 192.168.1.41                     # maszyna ma klucz z chwili kopii
+./infra/scripts/verify.sh --wait 600
+./infra/scripts/deploy.sh                      # zgodność z aktualnym kodem
+```
+
+Dane z chwili wykonania kopii vzdump; spójność jak po nagłym
+wyłączeniu. Zmierzony RTO: ok. 1 min 7 s.
+
+## 6. Odtworzenie stacji administratora
+
+Wszystko poza sekretami jest w repozytorium GitHub
+(BrotherFromMother/Praca_Inzynierska). Sekrety w menedżerze haseł
+(folder projektu), krytyczne także w kopercie awaryjnej.
+
+1. WSL2 z Debianem; pakiety i narzędzia zgodnie z etapem 2
+   (Terraform 1.16.x, Ansible przez pipx, ansible-lint, dig, openssl).
+2. Odtworzenie kluczy z menedżera haseł:
+   `~/.ssh/github_ed25519`, `~/.ssh/homelab_ed25519`,
+   `~/.ssh/portal_automation_ed25519` (chmod 600; klucze publiczne:
+   `ssh-keygen -y -f <plik> > <plik>.pub`) oraz ~/.ssh/config.
+3. Odtworzenie `~/.config/homelab/ansible-vault-pass` oraz plików
+   proxmox.env i proxmox-images.env (lub nowe tokeny w panelu Proxmoxa).
+4. Klon repozytorium, `ansible-galaxy collection install -r
+   infra/ansible/requirements.yml`.
+5. Zaufanie do certyfikatu głównego (infra/ansible/files/pki/root_ca.crt)
+   w WSL i Windows; reguła NRPT `.homelab.internal` → 192.168.1.40.
+6. Weryfikacja: `./infra/scripts/verify.sh`, następnie
+   `./infra/scripts/deploy.sh` (oczekiwany brak zmian).
+
+Bez stacji i menedżera haseł: panel Proxmoxa (root, hasło, TOTP lub
+kod zapasowy 2FA) pozwala odzyskać dostęp do maszyn.
+
+## 7. Weryfikacja po każdym odtworzeniu
+
+`./infra/scripts/verify.sh`: DNS, LDAPS, step-ca, Gitea, BookStack,
+Zabbix, dziewięć kontenerów na svc01. Logowanie kontami AD sprawdzić
+ręcznie w Gitei, BookStacku i Zabbixie.

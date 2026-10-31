@@ -35,6 +35,10 @@ konsekwencje.
 | ADR-025 | Przypinanie obrazów przez skrót           | przyjęta | 2026-10-25 |
 | ADR-026 | Zabbix: konfiguracja przez API, LDAP      | przyjęta | 2026-10-25 |
 | ADR-027 | Strategia kopii zapasowych danych usług   | przyjęta | 2026-10-25 |
+| ADR-028 | Wdrożenie środowiska jednym poleceniem   | przyjęta | 2026-10-27 |
+| ADR-029 | Przywracanie danych usług przy odbudowie | przyjęta | 2026-10-27 |
+| ADR-030 | Testy akceptacyjne, metodyka RTO i RPO   | przyjęta | 2026-10-31 |
+| ADR-031 | Klucze SSH i sekrety administratora      | przyjęta | 2026-10-31 |
 
 ---
 
@@ -1154,6 +1158,137 @@ Wybrano **opcję 3** jako uzupełnienie opcji 1 (obrona warstwowa):
   do chmury lub nośnika zewnętrznego jako kierunek rozwoju.
 - Monitorowanie świeżości kopii (plik last-success) w Zabbixie jako
   rozszerzenie.
+
+---
+
+## ADR-028: Wdrożenie środowiska jednym poleceniem
+
+**Status:** przyjęta
+**Data:** 2026-10-27
+
+### Kontekst
+Wdrożenie wymagało znajomości kolejności wykonywania konfiguracji
+Terraform i playbooków Ansible. Między dc1 a svc01 występuje cykl
+zależności: step-ca na svc01 potrzebuje DNS z dc1, a dc1 potrzebuje
+certyfikatu LDAPS z urzędu na svc01.
+
+### Decyzja
+- Playbook site.yml importuje playbooki w kolejności zależności:
+  dc.yml, svc.yml, dc-tls.yml, monitoring.yml, zabbix-config.yml,
+  backup.yml; cykl rozwiązany drugim przebiegiem na dc1 (dc-tls.yml,
+  poprzedzony rolą ca_trust).
+- Skrypt infra/scripts/deploy.sh: Terraform (images, platform) z planem
+  -detailed-exitcode i apply tylko przy zmianach, osobne podpowłoki dla
+  tokenów dwóch kont, oczekiwanie na SSH i cloud-init, site.yml,
+  pomiar czasu etapów.
+- Usuwanie klucza serwera z known_hosts wyłącznie dla maszyn, które
+  według planu Terraform zostały utworzone od nowa.
+- force_handlers = True; role weryfikują efekt (np. obecność
+  certyfikatu w magazynie systemowym), a nie tylko wykonanie kroku.
+
+### Uzasadnienie
+- Kolejność zapisana w kodzie zamiast w pamięci administratora.
+- To samo polecenie służy do pierwszego wdrożenia, weryfikacji
+  zgodności z kodem i odbudowy po awarii.
+- Zmiana klucza istniejącej maszyny nadal zatrzymuje wdrożenie
+  (ochrona przed podszyciem).
+
+### Konsekwencje
+- Weryfikacja zgodności całego środowiska trwa ok. 90 s.
+- Zbieżność zamiast ścisłej idempotentności: pierwsze uruchomienie
+  może wprowadzić zmiany zewnętrzne (aktualizacje pakietów); kolejne
+  zgłaszają jedynie zmianę pola hasła w Zabbixie (ADR-026).
+
+---
+
+## ADR-029: Przywracanie danych usług przy odbudowie
+
+**Status:** przyjęta
+**Data:** 2026-10-27 (poprawka 2026-10-27, INC-01)
+
+### Kontekst
+Odbudowany svc01 bez danych uruchomiłby puste usługi, a step-ca
+utworzyłby nowy urząd z nowym certyfikatem głównym.
+
+### Decyzja
+- Rola backup_restore wykonywana w svc.yml po roli backup (montowanie
+  NFS, restic), a przed rolami usług.
+- Dla każdej usługi z backup_docker_stacks: przywrócenie wyłącznie
+  wtedy, gdy żaden z jej wolumenów nie istnieje, a w repozytorium jest
+  kopia z jej tagiem; istniejące dane nigdy nie są nadpisywane.
+- Wolumeny tworzone z etykietami com.docker.compose.project
+  i com.docker.compose.volume, aby Compose uznał je za własne.
+- Lista wolumenów dołączana do argv jako osobne elementy
+  (wyrażenie Jinja z konkatenacją list).
+
+### Uzasadnienie
+- Jedna rola zachowuje się poprawnie przy zwykłym wdrożeniu (brak
+  działań), pierwszym wdrożeniu (brak kopii) i odbudowie (przywrócenie).
+- Przywrócenie przed rolą step_ca zachowuje tożsamość urzędu
+  (odcisk certyfikatu głównego bez zmian).
+
+### Konsekwencje
+- Błędne wykrycie wolumenów skutkuje nadpisaniem danych działających
+  usług (INC-01); test na działającym środowisku jest obowiązkowy po
+  każdej zmianie roli.
+
+---
+
+## ADR-030: Testy akceptacyjne i metodyka pomiaru RTO i RPO
+
+**Status:** przyjęta
+**Data:** 2026-10-31
+
+### Decyzja
+- Skrypt infra/scripts/verify.sh: DNS przez dc1, LDAPS z weryfikacją
+  certyfikatu, zdrowie step-ca, Gitea, BookStack i API Zabbixa przez
+  HTTPS bez wyłączania weryfikacji TLS, obecność i działanie
+  dziewięciu oczekiwanych kontenerów na svc01.
+- Tryb --wait N: powtarzanie co 10 s do pełnej sprawności lub limitu.
+- RTO: od chwili awarii (date przed qm destroy) do przejścia wszystkich
+  testów. RPO: od zakończenia ostatniej kopii do chwili awarii.
+- Znaczniki danych w BookStacku przed i po kopii jako dowód RPO.
+- Dwa scenariusze awarii svc01: A (deploy.sh i restic), B (qmrestore
+  z vzdump).
+
+### Uzasadnienie
+- Sprawność oceniana z perspektywy użytkownika, a nie zakończenia
+  polecenia.
+
+### Konsekwencje
+- Testy sprawdzają dostępność, nie logowanie kontami AD (wymagałoby
+  haseł w skrypcie); logowanie weryfikowane ręcznie.
+
+---
+
+## ADR-031: Zarządzanie kluczami SSH i sekretami administratora
+
+**Status:** przyjęta
+**Data:** 2026-10-31 (INC-02)
+
+### Decyzja
+- Pierwszy klucz automatyzacji przekazywany przez cloud-init przy
+  tworzeniu maszyny; później kluczami zarządza Ansible
+  (playbook rotate-automation-key.yml).
+- Moduł Terraform ignoruje zmiany initialization[0].user_account,
+  aby rotacja nie wymuszała zmian cloud-init istniejących maszyn.
+- Rotacja w kolejności: dodanie nowego klucza, test, usunięcie
+  pozostałych (exclusive), test odrzucenia starego, zniszczenie pliku.
+- Kopie kluczy SSH, hasła sejfu Ansible i hasła restic w menedżerze
+  haseł, zweryfikowane odtworzeniem i użyciem; sekrety krytyczne
+  (hasło sejfu, hasło restic, kody zapasowe 2FA) także poza
+  infrastrukturą (koperta awaryjna).
+
+### Uzasadnienie
+- Stacja administratora przestaje być pojedynczym punktem awarii:
+  konfiguracja jest w repozytorium, sekrety w menedżerze haseł.
+- Ujawniony klucz uznaje się za przejęty niezależnie od oceny ryzyka.
+
+### Konsekwencje
+- Bezpieczeństwo całości zależy od ochrony menedżera haseł (hasło
+  główne, drugi składnik, potwierdzanie dostępu do wpisów).
+- Menedżer haseł działający na tym samym sprzęcie co środowisko nie
+  zastępuje kopii poza infrastrukturą.
 
 ---
 
